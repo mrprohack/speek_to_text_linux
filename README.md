@@ -60,11 +60,17 @@ VoiceType is a lightweight, Linux-native speech-to-text typing replacement. It a
 
 ## 🎛️ Customizing Keymap
 
-You can change the global hotkey by editing the configuration file:
+### Option 1: Automatic (Best for X11)
 
-1. Open `~/.config/voicetype/config.json` in your editor.
-2. Change the `"hotkey"` value (e.g., `"f6"`, `"ctrl+shift+v"`, `"alt+space"`).
-3. Restart VoiceType for changes to take effect.
+Change the `"hotkey"` value in `~/.config/voicetype/config.json` (e.g., `"f6"`, `"alt+space"`).
+
+### Option 2: System Shortcut (Best for Wayland/Reliability)
+
+On Wayland, background listeners are often restricted. For a 100% reliable "anywhere" experience:
+
+1. Go to **Settings** -> **Keyboard** -> **Custom Shortcuts**.
+2. Add a new shortcut for `/home/mrpro/mygit/sst_linux/VoiceType-gui --toggle`.
+3. Set the key to `Ctrl + Space`.
 
 ## 🛠️ Build Commands
 

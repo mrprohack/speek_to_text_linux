@@ -152,14 +152,38 @@ func (l *Listener) resolveKeycodes(names ...string) []string {
 
 	lines := strings.Split(string(output), "\n")
 	for _, name := range names {
+		// Prepare common keysym variations
+		patterns := []string{
+			" " + name + " ",
+			" " + name + ")",
+			"(" + name + ")",
+			"= " + name,
+		}
+
 		for _, line := range lines {
-			// Example line: "keycode  37 = Control_L NoSymbol Control_L"
-			// We need to match the name and extract the keycode
-			if strings.Contains(line, " = "+name) || strings.Contains(line, " = "+name+" ") {
+			matched := false
+			for _, p := range patterns {
+				if strings.Contains(line, p) {
+					matched = true
+					break
+				}
+			}
+
+			if matched {
 				fields := strings.Fields(line)
-				if len(fields) > 1 && fields[0] == "keycode" {
-					// The keycode is the second field (index 1)
-					codes = append(codes, fields[1])
+				if len(fields) < 2 {
+					continue
+				}
+				// Handle both "keycode 37 = ..." and "37 0xffe3 (Control_L) ..."
+				code := ""
+				if fields[0] == "keycode" {
+					code = fields[1]
+				} else if _, err := fmt.Sscanf(fields[0], "%d", new(int)); err == nil {
+					code = fields[0]
+				}
+
+				if code != "" {
+					codes = append(codes, code)
 				}
 			}
 		}

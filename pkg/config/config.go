@@ -1,7 +1,7 @@
-// Package config provides configuration management for VoiceType
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,7 +21,7 @@ type Config struct {
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		Hotkey:      "F6",
+		Hotkey:      "ctrl+space",
 		AudioDevice: "",
 		Model:       "whisper-large-v3",
 		Temperature: 0.0,
@@ -32,10 +32,37 @@ func DefaultConfig() *Config {
 func Load() (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Load from environment
-	cfg.GROQ_API_KEY = os.Getenv("GROQ_API_KEY")
+	// 1. Try to load from file
+	path, err := GetConfigPath()
+	if err == nil {
+		if data, err := os.ReadFile(path); err == nil {
+			var fileCfg Config
+			if err := json.Unmarshal(data, &fileCfg); err == nil {
+				// Merge values from file
+				if fileCfg.GROQ_API_KEY != "" {
+					cfg.GROQ_API_KEY = fileCfg.GROQ_API_KEY
+				}
+				if fileCfg.Hotkey != "" {
+					cfg.Hotkey = fileCfg.Hotkey
+				}
+				if fileCfg.AudioDevice != "" {
+					cfg.AudioDevice = fileCfg.AudioDevice
+				}
+				if fileCfg.Model != "" {
+					cfg.Model = fileCfg.Model
+				}
+				cfg.DisableNotifications = fileCfg.DisableNotifications
+				cfg.Verbose = fileCfg.Verbose
+				cfg.Temperature = fileCfg.Temperature
+			}
+		}
+	}
 
-	// Override with environment variables if set
+	// 2. Override with environment variables
+	if ek := os.Getenv("GROQ_API_KEY"); ek != "" {
+		cfg.GROQ_API_KEY = ek
+	}
+
 	if hotkey := os.Getenv("VOICE_TYPE_HOTKEY"); hotkey != "" {
 		cfg.Hotkey = hotkey
 	}
@@ -68,10 +95,20 @@ func Load() (*Config, error) {
 
 // Save saves configuration to a file
 func (c *Config) Save(path string) error {
-	// Implementation would go here for persistent config
-	// For now, we only support environment-based config
-	_ = path
-	return nil
+	if path == "" {
+		var err error
+		path, err = GetConfigPath()
+		if err != nil {
+			return err
+		}
+	}
+
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(path, data, 0600)
 }
 
 // GetConfigPath returns the path to the config file

@@ -95,6 +95,8 @@ func (c *Client) Transcribe(ctx context.Context, audioData []byte) (string, erro
 	_ = writer.WriteField("model", c.model)
 	_ = writer.WriteField("temperature", "0")
 	_ = writer.WriteField("response_format", "verbose_json")
+	// Add instruction prompt for better flow, punctuation, and cleanup (Wispr Flow style)
+	_ = writer.WriteField("prompt", "Transcribe the audio accurately. Add appropriate punctuation and capitalization. Remove filler words like 'um', 'uh', 'ah'. Ensure the output is natural and professional.")
 
 	if err := writer.Close(); err != nil {
 		return "", errors.Wrap(err, errors.ErrorTypeAPI, "failed to close form writer")

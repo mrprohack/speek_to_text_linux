@@ -46,7 +46,14 @@ func (s *System) SetAndPaste(ctx context.Context, text string) error {
 // SetClipboard sets text to the system clipboard
 func (s *System) SetClipboard(text string) error {
 	// Try different clipboard tools
-	tools := []string{"xclip", "xsel", "wl-copy", "pbpaste"}
+	tools := []string{"wl-copy", "xclip", "xsel"}
+
+	// If on Wayland, definitely try wl-copy first
+	if strings.Contains(os.Getenv("WAYLAND_DISPLAY"), "wayland") {
+		if s.isToolAvailable("wl-copy") {
+			return s.setClipboardWithTool("wl-copy", text)
+		}
+	}
 
 	for _, tool := range tools {
 		if s.isToolAvailable(tool) {
@@ -66,31 +73,29 @@ func (s *System) isToolAvailable(tool string) bool {
 
 // setClipboardWithTool sets clipboard using a specific tool
 func (s *System) setClipboardWithTool(tool, text string) error {
-	var cmd *exec.Cmd
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
+	var cmd *exec.Cmd
 	switch tool {
 	case "xclip":
-		cmd = exec.Command("xclip", "-selection", "clipboard")
+		cmd = exec.CommandContext(ctx, "xclip", "-selection", "clipboard")
 	case "xsel":
-		cmd = exec.Command("xsel", "--clipboard", "--input")
+		cmd = exec.CommandContext(ctx, "xsel", "--clipboard", "--input")
 	case "wl-copy":
-		cmd = exec.Command("wl-copy")
-	case "pbpaste":
-		// pbpaste is for reading, not writing - skip this tool
-		return fmt.Errorf("pbpaste cannot be used for writing")
-	}
-
-	if cmd == nil {
+		cmd = exec.CommandContext(ctx, "wl-copy")
+	default:
 		return fmt.Errorf("unsupported tool: %s", tool)
 	}
 
 	cmd.Stdin = strings.NewReader(text)
-	output, err := cmd.CombinedOutput()
+	log.Printf("Executing %s...", tool)
+	err := cmd.Run()
 	if err != nil {
-		return fmt.Errorf("failed to set clipboard with %s: %v, output: %s", tool, err, output)
+		return fmt.Errorf("failed to set clipboard with %s: %v", tool, err)
 	}
 
-	log.Printf("Set clipboard using %s", tool)
+	log.Printf("Set clipboard successfully using %s", tool)
 	return nil
 }
 
@@ -118,7 +123,14 @@ func (s *System) setClipboardFallback(text string) error {
 // Paste simulates a paste operation
 func (s *System) Paste() error {
 	// Try different paste methods
-	tools := []string{"xdotool", "xte", "wtype"}
+	tools := []string{"wtype", "xdotool", "xte"}
+
+	// If on Wayland, definitely try wtype first
+	if strings.Contains(os.Getenv("WAYLAND_DISPLAY"), "wayland") {
+		if s.isToolAvailable("wtype") {
+			return s.pasteWithTool("wtype")
+		}
+	}
 
 	for _, tool := range tools {
 		if s.isToolAvailable(tool) {
@@ -132,18 +144,17 @@ func (s *System) Paste() error {
 
 // pasteWithTool simulates paste using a specific tool
 func (s *System) pasteWithTool(tool string) error {
-	var cmd *exec.Cmd
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 
+	var cmd *exec.Cmd
 	switch tool {
 	case "xdotool":
-		// xdotool key ctrl+v
-		cmd = exec.Command("xdotool", "key", "ctrl+v")
+		cmd = exec.CommandContext(ctx, "xdotool", "key", "ctrl+v")
 	case "xte":
-		// xte key 'Control+v'
-		cmd = exec.Command("xte", "key", "Control+v")
+		cmd = exec.CommandContext(ctx, "xte", "key", "Control+v")
 	case "wtype":
-		// wtype -P ctrl -k v
-		cmd = exec.Command("wtype", "-P", "ctrl", "-k", "v")
+		cmd = exec.CommandContext(ctx, "wtype", "-P", "ctrl", "-k", "v")
 	default:
 		return fmt.Errorf("unsupported tool: %s", tool)
 	}
@@ -216,6 +227,28 @@ func (s *System) getClipboardWithTool(tool string) (string, error) {
 	}
 
 	return string(output), nil
+}
+
+// TypeDirectly simulates typing the text directly at the cursor position
+func (s *System) TypeDirectly(ctx context.Context, text string) error {
+	// Typing takes more time than pasting
+	tCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	if strings.Contains(os.Getenv("WAYLAND_DISPLAY"), "wayland") {
+		if s.isToolAvailable("wtype") {
+			cmd := exec.CommandContext(tCtx, "wtype", text)
+			return cmd.Run()
+		}
+	}
+
+	if s.isToolAvailable("xdotool") {
+		// --clearmodifiers is important so accidental hotkey holds don't ruin the text
+		cmd := exec.CommandContext(tCtx, "xdotool", "type", "--clearmodifiers", "--delay", "1", text)
+		return cmd.Run()
+	}
+
+	return fmt.Errorf("no typing tool (wtype or xdotool) available for direct input")
 }
 
 // Cleanup cleans up resources

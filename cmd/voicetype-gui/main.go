@@ -10,8 +10,11 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"VoiceType/internal/api"
@@ -32,27 +35,34 @@ var version = "1.0.0"
 const configFile = ".voicetype.conf"
 
 type VoiceTypeApp struct {
-	a           fyne.App
-	cfg         *config.Config
-	audioSys    *audio.System
-	apiClient   *api.Client
-	clip        *clipboard.System
-	hotkey      *hotkey.Listener
-	ctx         context.Context
-	cancel      context.CancelFunc
-	isRecording bool
-	mu          sync.Mutex
-	window      fyne.Window
-	pillBg      *canvas.Rectangle
-	waveBars    []*canvas.Rectangle
-	status      *canvas.Text
-	anim        *fyne.Animation
-	running     bool
+	a            fyne.App
+	cfg          *config.Config
+	audioSys     *audio.System
+	apiClient    *api.Client
+	clip         *clipboard.System
+	hotkey       *hotkey.Listener
+	ctx          context.Context
+	cancel       context.CancelFunc
+	isRecording  bool
+	mu           sync.Mutex
+	window       fyne.Window
+	pillBg       *canvas.Rectangle
+	glowLayers   []*canvas.Rectangle
+	waveBars     []*canvas.Rectangle
+	status       *canvas.Text
+	anim         *fyne.Animation
+	pulseAnim    *fyne.Animation
+	running      bool
+	lastToggle   time.Time
+	winTitle     string
+	isProcessing bool
 }
 
 func main() {
 	flagHelp := flag.Bool("help", false, "Show help")
 	flagDevice := flag.String("device", "", "Audio device")
+	flagToggle := flag.Bool("toggle", false, "Toggle recording on a running instance")
+	flagStop := flag.Bool("stop", false, "Stop a running instance")
 	flag.Parse()
 
 	if *flagHelp {
@@ -60,6 +70,50 @@ func main() {
 		flag.PrintDefaults()
 		os.Exit(0)
 	}
+
+	pidFile := filepath.Join(os.TempDir(), "voicetype-gui.pid")
+
+	// Handle --toggle or --stop by sending signals to existing process
+	if *flagToggle || *flagStop {
+		data, err := os.ReadFile(pidFile)
+		if err == nil {
+			var pid int
+			fmt.Sscanf(string(data), "%d", &pid)
+			process, err := os.FindProcess(pid)
+			if err == nil {
+				if *flagToggle {
+					_ = process.Signal(syscall.SIGUSR1)
+					fmt.Println("Sent toggle signal to running instance.")
+				} else {
+					_ = process.Signal(syscall.SIGTERM)
+					fmt.Println("Sent stop signal to running instance.")
+				}
+				os.Exit(0)
+			}
+		}
+		if *flagToggle {
+			fmt.Println("No running instance found. Starting new instance...")
+		} else {
+			fmt.Println("No running instance found.")
+			os.Exit(1)
+		}
+	}
+
+	// Single instance check for main app
+	if _, err := os.Stat(pidFile); err == nil {
+		// Verify if process really exists
+		data, _ := os.ReadFile(pidFile)
+		var oldPid int
+		fmt.Sscanf(string(data), "%d", &oldPid)
+		if p, err := os.FindProcess(oldPid); err == nil && p.Signal(syscall.Signal(0)) == nil {
+			// Instead of just exiting, toggle the already running instance
+			_ = p.Signal(syscall.SIGUSR1)
+			fmt.Println("VoiceType is already running. Sent toggle signal.")
+			os.Exit(0)
+		}
+	}
+	os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644)
+	defer os.Remove(pidFile)
 
 	log.Println("VoiceType v" + version + " starting...")
 
@@ -89,6 +143,23 @@ func main() {
 	app.hotkey = hotkey.NewListener(nil)
 	app.ctx, app.cancel = context.WithCancel(context.Background())
 
+	// Handle Signals for toggling and quitting
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		for sig := range sigChan {
+			switch sig {
+			case syscall.SIGUSR1:
+				app.toggleRecording()
+			case syscall.SIGINT, syscall.SIGTERM:
+				fyne.Do(func() {
+					app.a.Quit()
+				})
+			}
+		}
+	}()
+
+	// Restore background listener for persistent sessions
 	if err := app.hotkey.Initialize(app.cfg.Hotkey); err != nil {
 		log.Printf("Hotkey init failed: %v", err)
 	}
@@ -100,11 +171,29 @@ func main() {
 	}
 
 	app.createWindow()
+	app.window.Show()
+	app.safeUIUpdate(func() {
+		app.status.Text = "VoiceType Ready"
+		app.status.Refresh()
+	})
 
-	fmt.Println()
-	fmt.Println("VoiceType Minimal is running!")
-	fmt.Printf("Toggle with %s\n", strings.ToUpper(app.cfg.Hotkey))
-	fmt.Println()
+	// Debounce toggle from same hotkey that launched the app
+	app.lastToggle = time.Now()
+
+	// One-shot auto-start on launch
+	app.startRecording()
+
+	// Safety shutdown: If the app is left idle for more than 60 seconds, quit.
+	// This handles cases where --toggle was used but something hung.
+	time.AfterFunc(60*time.Second, func() {
+		app.mu.Lock()
+		recording := app.isRecording
+		app.mu.Unlock()
+		if !recording {
+			log.Println("Auto-shutting down due to inactivity")
+			app.a.Quit()
+		}
+	})
 
 	app.a.Run()
 	app.shutdown()
@@ -132,6 +221,12 @@ func (app *VoiceTypeApp) readStdin() {
 
 func (app *VoiceTypeApp) toggleRecording() {
 	app.mu.Lock()
+	// Debounce and "Already Processing" check (prevents loop from xdotool CTRL+V)
+	if time.Since(app.lastToggle) < 600*time.Millisecond || app.isProcessing {
+		app.mu.Unlock()
+		return
+	}
+	app.lastToggle = time.Now()
 	recording := app.isRecording
 	app.mu.Unlock()
 
@@ -153,12 +248,22 @@ func (app *VoiceTypeApp) startRecording() {
 	app.mu.Unlock()
 
 	app.safeUIUpdate(func() {
-		app.pillBg.StrokeColor = color.RGBA{R: 236, G: 72, B: 153, A: 255} // Pink border when recording
-		app.status.Text = "Listening"
+		app.window.Show()
+		app.window.RequestFocus()
+		// Re-apply "Always on top" every time we show, just in case
+		go app.stripDecorations(app.winTitle)
+
+		app.pillBg.StrokeColor = color.RGBA{R: 225, G: 90, B: 164, A: 255}
+		app.status.Text = "Listening..."
 		app.pillBg.Refresh()
 		app.status.Refresh()
+		for _, glow := range app.glowLayers {
+			glow.StrokeColor = color.RGBA{R: 225, G: 90, B: 164, A: 60}
+			glow.Refresh()
+		}
 	})
 	app.startWaveAnimation()
+	app.startPulseAnimation()
 
 	log.Println("Recording started")
 }
@@ -178,6 +283,7 @@ func (app *VoiceTypeApp) stopRecording() {
 	app.mu.Unlock()
 
 	app.stopWaveAnimation()
+	app.stopPulseAnimation()
 
 	if len(audioData) == 0 {
 		app.safeUIUpdate(func() {
@@ -188,11 +294,21 @@ func (app *VoiceTypeApp) stopRecording() {
 	}
 
 	app.safeUIUpdate(func() {
-		app.status.Text = "Transcribing"
+		app.status.Text = "Transcribing..."
 		app.status.Refresh()
 	})
 
+	app.mu.Lock()
+	app.isProcessing = true
+	app.mu.Unlock()
+
 	go func() {
+		defer func() {
+			app.mu.Lock()
+			app.isProcessing = false
+			app.mu.Unlock()
+		}()
+
 		text, err := app.apiClient.Transcribe(app.ctx, audioData)
 		if err != nil {
 			log.Printf("Transcription failed: %v", err)
@@ -203,32 +319,45 @@ func (app *VoiceTypeApp) stopRecording() {
 				app.status.Refresh()
 			})
 			time.Sleep(1500 * time.Millisecond)
-			app.resetUI()
+			app.safeUIUpdate(func() {
+				app.a.Quit()
+			})
 			return
 		}
 
 		text = strings.TrimSpace(text)
 		if text == "" {
-			app.resetUI()
+			app.safeUIUpdate(func() {
+				app.a.Quit()
+			})
 			return
 		}
 
 		log.Printf("Transcribed: %s", text)
 
-		if err := app.clip.SetAndPaste(app.ctx, text); err != nil {
-			log.Printf("Paste failed: %v", err)
+		app.safeUIUpdate(func() {
+			app.status.Text = "Typing..."
+			app.status.Refresh()
+		})
+
+		if err := app.clip.TypeDirectly(app.ctx, text); err != nil {
+			log.Printf("Typing failed: %v", err)
+			app.safeUIUpdate(func() {
+				app.a.Quit()
+			})
 			return
 		}
 
 		app.safeUIUpdate(func() {
-			app.status.Text = "✓"
-			app.pillBg.StrokeColor = color.RGBA{R: 34, G: 197, B: 94, A: 255} // Green
+			app.status.Text = "✓ Done"
+			app.pillBg.StrokeColor = color.RGBA{R: 34, G: 197, B: 94, A: 255}
 			app.pillBg.Refresh()
 			app.status.Refresh()
 		})
 
-		time.AfterFunc(1200*time.Millisecond, func() {
-			app.resetUI()
+		time.Sleep(1200 * time.Millisecond)
+		app.safeUIUpdate(func() {
+			app.a.Quit()
 		})
 	}()
 }
@@ -238,11 +367,23 @@ func (app *VoiceTypeApp) resetUI() {
 	defer app.mu.Unlock()
 	if !app.isRecording {
 		app.safeUIUpdate(func() {
+			// Fade out effect start
 			app.status.Text = ""
-			// Revert to cream background/black border
 			app.pillBg.StrokeColor = color.Black
+			app.pillBg.StrokeWidth = 3
+			for _, glow := range app.glowLayers {
+				glow.StrokeColor = color.Transparent
+				glow.Refresh()
+			}
 			app.pillBg.Refresh()
 			app.status.Refresh()
+
+			// Small delay before hiding to let the user see the "✓" or "Error"
+			time.AfterFunc(200*time.Millisecond, func() {
+				app.safeUIUpdate(func() {
+					app.window.Hide()
+				})
+			})
 		})
 	}
 }
@@ -250,29 +391,36 @@ func (app *VoiceTypeApp) resetUI() {
 func (app *VoiceTypeApp) createWindow() {
 	app.a.Settings().SetTheme(&ui.VoiceTypeTheme{})
 
-	// Use a very unique Title to target with xprop/wmctrl reliably
-	winTitle := fmt.Sprintf("VoiceTypeUI_%d", time.Now().UnixNano())
-	app.window = app.a.NewWindow(winTitle)
+	app.winTitle = fmt.Sprintf("VoiceTypeUI_%d", time.Now().UnixNano())
+	app.window = app.a.NewWindow(app.winTitle)
 	app.window.SetFixedSize(true)
-	app.window.Resize(fyne.NewSize(260, 60))
+	// Larger window to accommodate the outer glow (shadow)
+	app.window.Resize(fyne.NewSize(320, 110))
 	app.window.CenterOnScreen()
 
-	// Image-inspired pill background (Cream/Off-white)
 	cream := color.RGBA{R: 255, G: 254, B: 242, A: 255}
-	pink := color.RGBA{R: 225, G: 90, B: 164, A: 255}
+
+	// Create glow layers (stacked rectangles with decreasing alpha)
+	app.glowLayers = make([]*canvas.Rectangle, 4)
+	for i := 0; i < 4; i++ {
+		glow := canvas.NewRectangle(color.Transparent)
+		glow.StrokeWidth = float32(i + 5)
+		glow.StrokeColor = color.Transparent
+		glow.CornerRadius = 38
+		app.glowLayers[i] = glow
+	}
 
 	app.pillBg = canvas.NewRectangle(cream)
 	app.pillBg.StrokeWidth = 3
-	app.pillBg.StrokeColor = pink
+	app.pillBg.StrokeColor = color.Black
 	app.pillBg.CornerRadius = 30
 
-	// Status text (centered inside pill)
-	app.status = canvas.NewText("", color.RGBA{R: 120, G: 120, B: 120, A: 255})
-	app.status.TextSize = 12
+	app.status = canvas.NewText("", color.RGBA{R: 80, G: 80, B: 80, A: 255})
+	app.status.TextSize = 14
+	app.status.TextStyle = fyne.TextStyle{Bold: true}
 	app.status.Alignment = fyne.TextAlignCenter
 
-	// Waveform bars (Black)
-	numBars := 18
+	numBars := 22
 	app.waveBars = make([]*canvas.Rectangle, numBars)
 	for i := 0; i < numBars; i++ {
 		bar := canvas.NewRectangle(color.Black)
@@ -288,8 +436,13 @@ func (app *VoiceTypeApp) createWindow() {
 		waveContainer.Add(bar)
 	}
 
-	// Precise Layout: No padding, pure pill
-	content := container.NewMax(
+	// Layout with Glow -> Pill -> Content
+	glowStack := container.NewMax()
+	for i := len(app.glowLayers) - 1; i >= 0; i-- {
+		glowStack.Add(app.glowLayers[i])
+	}
+
+	mainContent := container.NewMax(
 		app.pillBg,
 		container.NewCenter(
 			container.NewVBox(
@@ -299,15 +452,16 @@ func (app *VoiceTypeApp) createWindow() {
 		),
 	)
 
-	app.window.SetContent(content)
+	app.window.SetContent(container.NewMax(
+		container.NewPadded(glowStack),
+		container.NewPadded(mainContent),
+	))
 
-	// Force borderless and stay on top using X11 tools
 	go func() {
-		// Wait for window to be mapped
-		time.Sleep(100 * time.Millisecond)
-		for i := 0; i < 5; i++ {
-			app.stripDecorations(winTitle)
-			time.Sleep(200 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
+		for i := 0; i < 3; i++ {
+			app.stripDecorations(app.winTitle)
+			time.Sleep(250 * time.Millisecond)
 		}
 	}()
 
@@ -315,9 +469,7 @@ func (app *VoiceTypeApp) createWindow() {
 }
 
 func (app *VoiceTypeApp) stripDecorations(title string) {
-	// Remove window decorations (border, title bar, buttons)
 	exec.Command("xprop", "-name", title, "-f", "_MOTIF_WM_HINTS", "32c", "-set", "_MOTIF_WM_HINTS", "0x2, 0x0, 0x0, 0x0, 0x0").Run()
-	// Remove from taskbar and make it float on top
 	exec.Command("wmctrl", "-r", title, "-b", "add,above,skip_taskbar,skip_pager").Run()
 }
 
@@ -334,29 +486,24 @@ func (app *VoiceTypeApp) startWaveAnimation() {
 
 	startTime := time.Now()
 
-	app.anim = fyne.NewAnimation(time.Millisecond*50, func(f float32) {
-		// Animate bars
+	app.anim = fyne.NewAnimation(time.Millisecond*40, func(f float32) {
 		for i, bar := range app.waveBars {
 			if bar == nil {
 				continue
 			}
-
-			// Sine wave based on time and index for fluid motion
 			elapsed := time.Since(startTime).Seconds()
-			offset := float64(i) * 0.3
-			h := 4 + 45*math.Abs(math.Sin(elapsed*7+offset))
-
+			offset := float64(i) * 0.25
+			h := 2 + 50*math.Abs(math.Sin(elapsed*8+offset))
 			bar.Resize(fyne.NewSize(3, float32(h)))
 			bar.Refresh()
 		}
 	})
 	app.anim.RepeatCount = fyne.AnimationRepeatForever
 	app.anim.Start()
-	// Timer update
+
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
-
 		for {
 			app.mu.Lock()
 			recording := app.isRecording
@@ -368,12 +515,10 @@ func (app *VoiceTypeApp) startWaveAnimation() {
 			select {
 			case <-ticker.C:
 				elapsed := time.Since(startTime)
-				seconds := int(elapsed.Seconds())
-				minutes := seconds / 60
-				seconds = seconds % 60
-
+				mins := int(elapsed.Minutes())
+				secs := int(elapsed.Seconds()) % 60
 				app.safeUIUpdate(func() {
-					app.status.Text = fmt.Sprintf("%d:%02d", minutes, seconds)
+					app.status.Text = fmt.Sprintf("%d:%02d", mins, secs)
 					app.status.Refresh()
 				})
 			case <-app.ctx.Done():
@@ -383,19 +528,47 @@ func (app *VoiceTypeApp) startWaveAnimation() {
 	}()
 }
 
+func (app *VoiceTypeApp) startPulseAnimation() {
+	pink := color.RGBA{R: 225, G: 90, B: 164, A: 255}
+	app.pulseAnim = fyne.NewAnimation(time.Second*2, func(f float32) {
+		app.safeUIUpdate(func() {
+			val := math.Sin(float64(f) * 2 * math.Pi)
+			app.pillBg.StrokeWidth = 3 + 1.2*float32(val)
+			alpha := uint8(100 + 100*val)
+			for i, glow := range app.glowLayers {
+				glow.StrokeColor = color.RGBA{R: pink.R, G: pink.G, B: pink.B, A: uint8(float64(alpha) / float64(i+1))}
+				glow.Refresh()
+			}
+			app.pillBg.Refresh()
+		})
+	})
+	app.pulseAnim.RepeatCount = fyne.AnimationRepeatForever
+	app.pulseAnim.Start()
+}
+
+func (app *VoiceTypeApp) stopPulseAnimation() {
+	if app.pulseAnim != nil {
+		app.pulseAnim.Stop()
+		app.pulseAnim = nil
+	}
+	app.safeUIUpdate(func() {
+		for _, glow := range app.glowLayers {
+			glow.StrokeColor = color.Transparent
+			glow.Refresh()
+		}
+	})
+}
+
 func (app *VoiceTypeApp) stopWaveAnimation() {
 	if app.anim != nil {
 		app.anim.Stop()
 		app.anim = nil
 	}
-
+	app.resetUI()
 	app.safeUIUpdate(func() {
-		app.status.Text = ""
-		app.status.Refresh()
 		for _, bar := range app.waveBars {
 			if bar != nil {
 				bar.Hide()
-				bar.Resize(fyne.NewSize(4, 10))
 				bar.Refresh()
 			}
 		}
@@ -409,23 +582,15 @@ func (app *VoiceTypeApp) shutdown() {
 	log.Println("Done")
 }
 
-func getConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return home + "/" + configFile
-}
-
 func loadAPIKey() string {
-	path := getConfigPath()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
+	cfg, _ := config.Load()
+	return cfg.GROQ_API_KEY
 }
 
 func saveAPIKey(key string) {
-	path := getConfigPath()
-	os.WriteFile(path, []byte(key), 0600)
+	cfg, _ := config.Load()
+	cfg.GROQ_API_KEY = key
+	cfg.Save("")
 }
 
 func askAPIKey() string {
