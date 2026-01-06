@@ -1,4 +1,3 @@
-// Package hotkey provides global hotkey listening functionality for VoiceType
 package hotkey
 
 import (
@@ -8,11 +7,11 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"VoiceType/pkg/errors"
 )
 
-// Listener represents a global hotkey listener
 type Listener struct {
 	errHandler *errors.Handler
 	hotkey     string
@@ -20,20 +19,19 @@ type Listener struct {
 	onRelease  func()
 	isRunning  bool
 	mu         sync.Mutex
+	stopChan   chan struct{}
 }
 
-// NewListener creates a new hotkey listener
 func NewListener(errHandler *errors.Handler) *Listener {
 	return &Listener{
 		errHandler: errHandler,
 	}
 }
 
-// Initialize initializes the hotkey listener
 func (l *Listener) Initialize(hotkey string) error {
 	l.hotkey = hotkey
+	l.stopChan = make(chan struct{})
 
-	// Detect desktop environment and choose appropriate method
 	if err := l.detectAndSetup(); err != nil {
 		return errors.Wrap(err, errors.ErrorTypeHotkey, "failed to setup hotkey")
 	}
@@ -42,99 +40,262 @@ func (l *Listener) Initialize(hotkey string) error {
 	return nil
 }
 
-// detectAndSetup detects the desktop environment and sets up hotkey listening
 func (l *Listener) detectAndSetup() error {
-	// Check for Wayland
 	if strings.Contains(os.Getenv("WAYLAND_DISPLAY"), "wayland") {
+		// Try xdotool first (more reliable)
+		if l.isToolAvailable("xdotool") {
+			log.Println("Using xdotool for hotkey detection (Wayland)")
+			go l.pollKeyPressX11()
+			return nil
+		}
+		// Fall back to ydotool
 		return l.setupWaylandHotkey()
 	}
 
-	// Check for X11
 	if strings.Contains(os.Getenv("DISPLAY"), ":") {
 		return l.setupX11Hotkey()
 	}
 
-	// Fallback: try to use global shortcuts
 	return l.setupGlobalHotkey()
 }
 
-// setupX11Hotkey sets up X11-based hotkey listening
 func (l *Listener) setupX11Hotkey() error {
-	// Try to use xbindkeys or sxhkd
-	if l.isToolAvailable("xbindkeys") {
-		return l.setupXbindkeysHotkey()
+	if l.isToolAvailable("xdotool") {
+		log.Println("Using xdotool for hotkey detection")
+		go l.pollKeyPressX11()
+		return nil
 	}
 
-	if l.isToolAvailable("sxhkd") {
-		return l.setupSxhkdHotkey()
-	}
-
-	// Fallback to key detection via xdotool
-	log.Println("Warning: No X11 hotkey daemon found, using polling fallback")
+	log.Println("Warning: No hotkey tool found. Install xdotool: sudo apt install xdotool")
+	go l.pollKeyPressGeneric()
 	return nil
 }
 
-// setupWaylandHotkey sets up Wayland-based hotkey listening
+func (l *Listener) pollKeyPressX11() {
+	keyboardID := l.findKeyboardID()
+	if keyboardID == "" {
+		log.Println("Could not find keyboard ID, falling back to generic polling")
+		l.pollKeyPressGeneric()
+		return
+	}
+
+	// Dynamically find keycodes
+	ctrlCodes := l.resolveKeycodes("Control_L", "Control_R")
+	spaceCodes := l.resolveKeycodes("space")
+
+	if len(ctrlCodes) == 0 || len(spaceCodes) == 0 {
+		log.Printf("Warning: Could not resolve keycodes (ctrl: %v, space: %v), using defaults (37, 105 for Ctrl, 65 for Space)", ctrlCodes, spaceCodes)
+		ctrlCodes = []string{"37", "105"} // Default for Ctrl_L, Ctrl_R
+		spaceCodes = []string{"65"}       // Default for Space
+	}
+
+	log.Printf("Monitoring keyboard ID %s for hotkeys (Ctrl: %v, Space: %v)", keyboardID, ctrlCodes, spaceCodes)
+
+	lastToggle := time.Now()
+	isPressed := false
+
+	for {
+		select {
+		case <-l.stopChan:
+			return
+		default:
+		}
+
+		// Query key state using xinput
+		cmd := exec.Command("xinput", "query-state", keyboardID)
+		output, _ := cmd.CombinedOutput()
+		outputStr := string(output)
+
+		ctrlDown := false
+		for _, code := range ctrlCodes {
+			if strings.Contains(outputStr, "key["+code+"]=down") {
+				ctrlDown = true
+				break
+			}
+		}
+
+		spaceDown := false
+		for _, code := range spaceCodes {
+			if strings.Contains(outputStr, "key["+code+"]=down") {
+				spaceDown = true
+				break
+			}
+		}
+
+		currentlyDown := ctrlDown && spaceDown
+
+		if currentlyDown && !isPressed {
+			// Key just pressed
+			if time.Since(lastToggle) > 400*time.Millisecond {
+				log.Println("Hotkey Detected: Ctrl + Space")
+				l.firePress()
+				isPressed = true
+				lastToggle = time.Now()
+			}
+		} else if !currentlyDown && isPressed {
+			// Key released
+			isPressed = false
+		}
+
+		time.Sleep(40 * time.Millisecond)
+	}
+}
+
+func (l *Listener) resolveKeycodes(names ...string) []string {
+	var codes []string
+	cmd := exec.Command("xmodmap", "-pk")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("Warning: Could not run xmodmap to resolve keycodes: %v", err)
+		return codes
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, name := range names {
+		for _, line := range lines {
+			// Example line: "keycode  37 = Control_L NoSymbol Control_L"
+			// We need to match the name and extract the keycode
+			if strings.Contains(line, " = "+name) || strings.Contains(line, " = "+name+" ") {
+				fields := strings.Fields(line)
+				if len(fields) > 1 && fields[0] == "keycode" {
+					// The keycode is the second field (index 1)
+					codes = append(codes, fields[1])
+				}
+			}
+		}
+	}
+	return codes
+}
+
+func (l *Listener) findKeyboardID() string {
+	cmd := exec.Command("xinput", "list")
+	output, _ := cmd.CombinedOutput()
+	lines := strings.Split(string(output), "\n")
+
+	// Prioritize slave keyboards which are actual devices
+	for _, line := range lines {
+		if strings.Contains(line, "slave") && (strings.Contains(line, "keyboard") || strings.Contains(line, "Keyboard")) &&
+			!strings.Contains(line, "XTEST") &&
+			strings.Contains(line, "id=") {
+			parts := strings.Split(line, "id=")
+			if len(parts) > 1 {
+				idPart := strings.Fields(parts[1])[0]
+				return idPart
+			}
+		}
+	}
+
+	// Fallback to master core keyboard (id=3 usually)
+	return "3"
+}
+
+func (l *Listener) pollKeyPressGeneric() {
+	log.Println("Warning: No hotkey detection method available")
+	log.Println("Please install xdotool: sudo apt install xdotool")
+
+	for {
+		select {
+		case <-l.stopChan:
+			return
+		default:
+		}
+
+		if l.isToolAvailable("xdotool") {
+			log.Println("xdotool detected, switching to xdotool polling")
+			go l.pollKeyPressX11()
+			return
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+}
+
 func (l *Listener) setupWaylandHotkey() error {
-	// Try to use swaymsg or similar
-	if l.isToolAvailable("swaymsg") {
-		return l.setupSwayHotkey()
+	if l.isToolAvailable("ydotool") {
+		log.Println("Using ydotool for Wayland hotkey detection")
+		go l.pollKeyPressWayland()
+		return nil
 	}
 
-	// For now, we'll use a polling-based approach
-	log.Println("Warning: Using polling fallback for Wayland hotkey detection")
+	log.Println("Warning: Using generic polling for Wayland hotkey detection")
+	log.Println("Please install ydotool for Wayland support")
+	go l.pollKeyPressGeneric()
 	return nil
 }
 
-// setupXbindkeysHotkey sets up hotkey using xbindkeys
-func (l *Listener) setupXbindkeysHotkey() error {
-	// This would configure xbindkeys to listen for the hotkey
-	// For now, we'll use a simple polling approach
-	log.Println("Using xbindkeys for hotkey detection")
-	return nil
+func (l *Listener) pollKeyPressWayland() {
+	keyName := l.hotkeyToXdotool(l.hotkey)
+	log.Printf("Wayland polling for key: %s", keyName)
+
+	prevPressed := false
+
+	for {
+		select {
+		case <-l.stopChan:
+			return
+		default:
+		}
+
+		// Use ydotool to check if key is being pressed
+		cmd := exec.Command("ydotool", "key", "--delay", "0", keyName)
+		err := cmd.Run()
+
+		isPressed := err == nil
+
+		if isPressed && !prevPressed {
+			log.Println("Hotkey pressed")
+			l.firePress()
+			prevPressed = true
+		} else if !isPressed && prevPressed {
+			log.Println("Hotkey released")
+			l.fireRelease()
+			prevPressed = false
+		}
+
+		time.Sleep(30 * time.Millisecond)
+	}
 }
 
-// setupSxhkdHotkey sets up hotkey using sxhkd
-func (l *Listener) setupSxhkdHotkey() error {
-	// sxhkd is a hotkey daemon for X11 and Wayland
-	log.Println("Using sxhkd for hotkey detection")
-	return nil
-}
-
-// setupSwayHotkey sets up hotkey using swaync or similar
-func (l *Listener) setupSwayHotkey() error {
-	log.Println("Using swaymsg for hotkey detection")
-	return nil
-}
-
-// setupGlobalHotkey sets up a global hotkey using available tools
 func (l *Listener) setupGlobalHotkey() error {
-	// Try to set up using gsettings or similar
 	log.Println("Warning: No display detected, using fallback hotkey method")
+	go l.pollKeyPressGeneric()
 	return nil
 }
 
-// isToolAvailable checks if a tool is available
+func (l *Listener) hotkeyToXdotool(hotkey string) string {
+	switch hotkey {
+	case "Ctrl+Space", "ctrl+space":
+		return "ctrl+space"
+	case "Enter", "enter", "Return":
+		return "Return"
+	case "F5", "f5":
+		return "F5"
+	case "F6", "f6":
+		return "F6"
+	case "F12", "f12":
+		return "F12"
+	default:
+		return hotkey
+	}
+}
+
 func (l *Listener) isToolAvailable(tool string) bool {
 	_, err := exec.LookPath(tool)
 	return err == nil
 }
 
-// OnPress sets the callback for hotkey press events
 func (l *Listener) OnPress(callback func()) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.onPress = callback
 }
 
-// OnRelease sets the callback for hotkey release events
 func (l *Listener) OnRelease(callback func()) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.onRelease = callback
 }
 
-// Start starts the hotkey listener
 func (l *Listener) Start() error {
 	l.mu.Lock()
 	if l.isRunning {
@@ -148,7 +309,6 @@ func (l *Listener) Start() error {
 	return nil
 }
 
-// Stop stops the hotkey listener
 func (l *Listener) Stop() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -158,24 +318,25 @@ func (l *Listener) Stop() {
 	}
 }
 
-// Close closes the hotkey listener and cleans up
 func (l *Listener) Close() {
+	select {
+	case <-l.stopChan:
+	default:
+		close(l.stopChan)
+	}
 	l.Stop()
 }
 
-// IsRunning returns whether the listener is running
 func (l *Listener) IsRunning() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.isRunning
 }
 
-// GetHotkey returns the current hotkey
 func (l *Listener) GetHotkey() string {
 	return l.hotkey
 }
 
-// firePress fires the press callback
 func (l *Listener) firePress() {
 	l.mu.Lock()
 	callback := l.onPress
@@ -185,7 +346,6 @@ func (l *Listener) firePress() {
 	}
 }
 
-// fireRelease fires the release callback
 func (l *Listener) fireRelease() {
 	l.mu.Lock()
 	callback := l.onRelease
@@ -194,6 +354,3 @@ func (l *Listener) fireRelease() {
 		go callback()
 	}
 }
-
-// Import fmt for error formatting
-var _ = fmt.Sprintf

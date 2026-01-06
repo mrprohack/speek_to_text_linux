@@ -3,8 +3,10 @@ package audio
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"os/exec"
 	"time"
 
 	"VoiceType/pkg/errors"
@@ -19,76 +21,80 @@ type System struct {
 	device        string
 	isRecording   bool
 	audioBuffer   []byte
+	cmd           *exec.Cmd
+	stdout        io.ReadCloser
 }
 
 // NewSystem creates a new audio system
 func NewSystem(errHandler *errors.Handler) *System {
 	return &System{
 		errHandler:    errHandler,
-		sampleRate:    16000, // 16kHz for Whisper
-		channels:      1,     // Mono
-		bitsPerSample: 16,    // 16-bit
+		sampleRate:    16000,
+		channels:      1,
+		bitsPerSample: 16,
+		device:        "default",
 	}
 }
 
 // Initialize initializes the audio system
 func (s *System) Initialize(device string) error {
-	s.device = device
-
-	// Try to detect available audio system
-	if err := s.detectAudioSystem(); err != nil {
-		return errors.Wrap(err, errors.ErrorTypeAudio, "failed to detect audio system")
+	if device != "" {
+		s.device = device
 	}
-
 	log.Printf("Audio system initialized with device: %s", s.device)
 	return nil
 }
 
-// detectAudioSystem detects available audio systems and selects one
-func (s *System) detectAudioSystem() error {
-	// Check for PulseAudio
-	if os.Getenv("PULSE_SERVER") != "" {
-		s.device = "pulse"
-		return nil
-	}
-
-	// Check for ALSA devices
-	if s.device == "" {
-		// Try to list ALSA devices
-		device, err := s.findALSADevice()
-		if err == nil {
-			s.device = device
-			return nil
-		}
-	}
-
-	// Default to ALSA default device
-	if s.device == "" {
-		s.device = "default"
-	}
-
-	return nil
-}
-
-// findALSADevice finds an available ALSA device
-func (s *System) findALSADevice() (string, error) {
-	// This is a simplified implementation
-	// In a real implementation, we would use alsa-go or similar library
-	// For now, we'll use the default device
-	return "default", nil
-}
-
-// StartRecording starts audio recording
+// StartRecording starts audio recording from microphone
 func (s *System) StartRecording() error {
 	if s.isRecording {
 		return errors.NewError(errors.ErrorTypeAudio, "already recording", nil)
 	}
 
 	s.audioBuffer = make([]byte, 0)
+
+	// Use arecord to capture real audio from microphone
+	args := []string{
+		"-D", s.device,
+		"-f", "S16_LE",
+		"-r", fmt.Sprintf("%d", s.sampleRate),
+		"-c", fmt.Sprintf("%d", s.channels),
+		"-t", "raw",
+	}
+
+	s.cmd = exec.Command("arecord", args...)
+
+	var err error
+	s.stdout, err = s.cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	if err := s.cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start arecord: %w", err)
+	}
+
 	s.isRecording = true
+
+	// Read audio data in background
+	go s.readAudio()
 
 	log.Printf("Started recording audio at %d Hz", s.sampleRate)
 	return nil
+}
+
+// readAudio reads audio data from arecord
+func (s *System) readAudio() {
+	buffer := make([]byte, 4096)
+	for s.isRecording {
+		n, err := s.stdout.Read(buffer)
+		if n > 0 {
+			s.audioBuffer = append(s.audioBuffer, buffer[:n]...)
+		}
+		if err != nil {
+			break
+		}
+	}
 }
 
 // StopRecording stops recording and returns audio data
@@ -99,13 +105,22 @@ func (s *System) StopRecording() ([]byte, error) {
 
 	s.isRecording = false
 
+	// Stop arecord
+	if s.cmd != nil && s.cmd.Process != nil {
+		s.cmd.Process.Kill()
+		s.cmd.Wait()
+	}
+
+	if s.stdout != nil {
+		s.stdout.Close()
+	}
+
 	if len(s.audioBuffer) == 0 {
 		return nil, errors.ErrAudioTooShort
 	}
 
 	log.Printf("Stopped recording, captured %d bytes of audio", len(s.audioBuffer))
 
-	// Return a copy of the audio buffer
 	result := make([]byte, len(s.audioBuffer))
 	copy(result, s.audioBuffer)
 	s.audioBuffer = nil
@@ -158,17 +173,53 @@ func (s *System) Duration() time.Duration {
 	return time.Duration(samples) * time.Second / time.Duration(s.sampleRate)
 }
 
-// addAudioData adds audio data to the buffer
-func (s *System) addAudioData(data []byte) {
-	s.audioBuffer = append(s.audioBuffer, data...)
+// SaveToFile saves audio buffer to a WAV file (for testing)
+func (s *System) SaveToFile(filename string) error {
+	if len(s.audioBuffer) == 0 {
+		return fmt.Errorf("no audio data to save")
+	}
+
+	// Create WAV file manually
+	file, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Write WAV header
+	dataSize := len(s.audioBuffer)
+	fileSize := 36 + dataSize
+
+	// RIFF header
+	file.Write([]byte("RIFF"))
+	writeInt32(file, fileSize)
+	file.Write([]byte("WAVE"))
+
+	// fmt chunk
+	file.Write([]byte("fmt "))
+	writeInt32(file, 16)                                        // Subchunk1Size
+	writeInt16(file, 1)                                         // AudioFormat (PCM)
+	writeInt16(file, int16(s.channels))                         // NumChannels
+	writeInt32(file, s.sampleRate)                              // SampleRate
+	writeInt32(file, s.sampleRate*s.bitsPerSample/8*s.channels) // ByteRate
+	writeInt16(file, int16(s.bitsPerSample/8*s.channels))       // BlockAlign
+	writeInt16(file, int16(s.bitsPerSample))                    // BitsPerSample
+
+	// data chunk
+	file.Write([]byte("data"))
+	writeInt32(file, dataSize)
+	file.Write(s.audioBuffer)
+
+	log.Printf("Saved audio to %s (%d bytes)", filename, fileSize)
+	return nil
 }
 
-// ReadAudioDevice reads audio from the device (stub implementation)
-func (s *System) ReadAudioDevice() ([]byte, error) {
-	// This would be implemented with actual ALSA/PulseAudio calls
-	// For now, return silence
-	return make([]byte, 1024), nil
+func writeInt16(file *os.File, v int16) {
+	b := []byte{byte(v), byte(v >> 8)}
+	file.Write(b)
 }
 
-// Import os for file operations
-var _ = fmt.Sprintf
+func writeInt32(file *os.File, v int) {
+	b := []byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)}
+	file.Write(b)
+}

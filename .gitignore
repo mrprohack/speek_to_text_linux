@@ -11,6 +11,11 @@ node_modules/
 *.test
 *.out
 VoiceType
+/VoiceType-gui
+/voicetype-gui
+/mic-test
+*.wav
+*.mp3
 
 # IDE
 .vscode/

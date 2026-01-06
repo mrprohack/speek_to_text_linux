@@ -33,6 +33,11 @@ build:
 build-debug:
 	$(GO) build -gcflags="all=-N -l" -o $(BINARY_NAME)-debug ./cmd/voicetype/
 
+# Build GUI version
+.PHONY: build-gui
+build-gui:
+	$(GO) build $(LDFLAGS) -o $(BINARY_NAME)-gui ./cmd/voicetype-gui/
+
 # Build for multiple platforms
 .PHONY: build-all
 build-all:
@@ -117,6 +122,11 @@ release: clean build-all
 .PHONY: run
 run: build
 	./$(BINARY_NAME)
+
+# Run the GUI application
+.PHONY: run-gui
+run-gui: build-gui
+	./$(BINARY_NAME)-gui
 
 # Run with custom hotkey
 .PHONY: run-hotkey

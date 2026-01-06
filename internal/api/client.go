@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"VoiceType/pkg/errors"
+	"VoiceType/pkg/wav"
 )
 
 // Client represents the Groq API client
@@ -70,6 +71,12 @@ func (c *Client) Transcribe(ctx context.Context, audioData []byte) (string, erro
 		return "", errors.ErrAudioTooShort
 	}
 
+	// Encode audio as WAV
+	wavData, err := wav.Encode(audioData, 16000, 1, 16)
+	if err != nil {
+		return "", errors.Wrap(err, errors.ErrorTypeAPI, "failed to encode WAV")
+	}
+
 	// Create multipart form
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -80,7 +87,7 @@ func (c *Client) Transcribe(ctx context.Context, audioData []byte) (string, erro
 		return "", errors.Wrap(err, errors.ErrorTypeAPI, "failed to create form file")
 	}
 
-	if _, err := io.Copy(part, bytes.NewReader(audioData)); err != nil {
+	if _, err := io.Copy(part, bytes.NewReader(wavData)); err != nil {
 		return "", errors.Wrap(err, errors.ErrorTypeAPI, "failed to write audio data")
 	}
 

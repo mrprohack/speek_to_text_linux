@@ -1,200 +1,315 @@
-// VoiceType - Linux Native Speech-to-Text App
-// Main entry point for the application
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
+	"image/color"
 	"log"
 	"os"
-	"os/signal"
+	"strings"
 	"sync"
-	"syscall"
+	"time"
 
 	"VoiceType/internal/api"
 	"VoiceType/internal/audio"
 	"VoiceType/internal/clipboard"
-	"VoiceType/internal/hotkey"
-	"VoiceType/internal/notify"
-	"VoiceType/internal/ui"
 	"VoiceType/pkg/config"
-	"VoiceType/pkg/errors"
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/widget"
 )
 
-var (
-	version = "1.0.0"
-	commit  = "dev"
-	date    = "now"
-)
+var version = "1.0.0"
+
+const configFile = ".voicetype.conf"
+
+type VoiceTypeApp struct {
+	a           fyne.App
+	cfg         *config.Config
+	audioSys    *audio.System
+	apiClient   *api.Client
+	clip        *clipboard.System
+	ctx         context.Context
+	cancel      context.CancelFunc
+	isRecording bool
+	mu          sync.Mutex
+	window      fyne.Window
+	statusLabel *widget.Label
+	icon        *canvas.Text
+	running     bool
+}
 
 func main() {
-	// Parse command line flags
-	versionFlag := flag.Bool("version", false, "Show version information")
-	helpFlag := flag.Bool("help", false, "Show help information")
-	verboseFlag := flag.Bool("v", false, "Enable verbose logging")
-	hotkeyFlag := flag.String("hotkey", "F6", "Hotkey to trigger recording (default: F6)")
-	deviceFlag := flag.String("device", "", "Audio device to use (auto-detect if empty)")
-	noNotifyFlag := flag.Bool("no-notify", false, "Disable notifications")
+	flagHelp := flag.Bool("help", false, "Show help")
+	flagDevice := flag.String("device", "", "Audio device")
 	flag.Parse()
 
-	// Handle version flag
-	if *versionFlag {
-		fmt.Printf("VoiceType version %s (commit: %s, date: %s)\n", version, commit, date)
-		os.Exit(0)
-	}
-
-	// Handle help flag
-	if *helpFlag {
+	if *flagHelp {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n", os.Args[0])
 		flag.PrintDefaults()
 		os.Exit(0)
 	}
 
-	// Set up logging
-	if *verboseFlag {
-		log.SetFlags(log.LstdFlags | log.Lshortfile)
-	} else {
-		log.SetFlags(log.LstdFlags)
-		log.SetOutput(os.Stderr)
+	log.Println("VoiceType v" + version + " starting...")
+
+	cfg, _ := config.Load()
+	cfg.AudioDevice = *flagDevice
+
+	// Load or ask for API key
+	apiKey := loadAPIKey()
+	if apiKey == "" {
+		apiKey = askAPIKey()
+		saveAPIKey(apiKey)
+	}
+	cfg.GROQ_API_KEY = apiKey
+
+	app := &VoiceTypeApp{
+		a:       app.NewWithID("com.voicetype.app"),
+		cfg:     cfg,
+		running: true,
 	}
 
-	log.Printf("VoiceType v%s starting...", version)
-
-	// Load configuration
-	cfg, err := config.Load()
-	if err != nil {
-		log.Printf("Warning: Could not load config file: %v", err)
-	}
-	cfg.Hotkey = *hotkeyFlag
-	cfg.AudioDevice = *deviceFlag
-	cfg.DisableNotifications = *noNotifyFlag
-
-	// Check for API key
-	if cfg.GROQ_API_KEY == "" {
-		log.Fatal("Error: GROQ_API_KEY environment variable is not set. Please set it before running VoiceType.")
+	app.audioSys = audio.NewSystem(nil)
+	if err := app.audioSys.Initialize(cfg.AudioDevice); err != nil {
+		log.Fatalf("Audio init failed: %v", err)
 	}
 
-	// Create error handler
-	errHandler := errors.NewHandler()
+	app.apiClient = api.NewClient(cfg.GROQ_API_KEY, nil)
+	app.clip = clipboard.NewSystem(nil)
+	app.ctx, app.cancel = context.WithCancel(context.Background())
 
-	// Create notification system
-	notifier := notify.NewNotifier(errHandler)
-	if !cfg.DisableNotifications {
-		if err := notifier.Initialize(); err != nil {
-			log.Printf("Warning: Could not initialize notifications: %v", err)
-		}
-	}
+	// Create window
+	app.createWindow()
 
-	// Create UI system
-	recordingUI := ui.NewUI(errHandler)
+	// Start stdin reader in background
+	go app.readStdin()
 
-	// Create audio system
-	audioSys := audio.NewSystem(errHandler)
-	if err := audioSys.Initialize(cfg.AudioDevice); err != nil {
-		errHandler.Fatal("Failed to initialize audio system: %v", err)
-	}
-	defer audioSys.Close()
+	fmt.Println()
+	fmt.Println("VoiceType is running!")
+	fmt.Println("Press ENTER to start/stop recording")
+	fmt.Println("Or use the GUI window")
+	fmt.Println("Press Ctrl+C to quit")
+	fmt.Println()
 
-	// Create API client
-	apiClient := api.NewClient(cfg.GROQ_API_KEY, errHandler)
+	// Run Fyne app (this blocks)
+	app.a.Run()
 
-	// Create clipboard system
-	clip := clipboard.NewSystem(errHandler)
+	app.shutdown()
+}
 
-	// Create hotkey listener
-	hotkeyListener := hotkey.NewListener(errHandler)
-	if err := hotkeyListener.Initialize(cfg.Hotkey); err != nil {
-		errHandler.Fatal("Failed to initialize hotkey listener: %v", err)
-	}
-	defer hotkeyListener.Close()
-
-	// State management
-	var wg sync.WaitGroup
-	var stateMu sync.Mutex
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Handle hotkey events
-	hotkeyListener.OnPress(func() {
-		stateMu.Lock()
-		recordingUI.Show()
-		stateMu.Unlock()
-
-		// Start recording
-		if err := audioSys.StartRecording(); err != nil {
-			errHandler.Error("Failed to start recording: %v", err)
-			notifier.Notify("Recording Error", "Failed to start microphone. Check permissions.")
+func (app *VoiceTypeApp) readStdin() {
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		select {
+		case <-app.ctx.Done():
 			return
+		default:
 		}
-	})
 
-	hotkeyListener.OnRelease(func() {
-		stateMu.Lock()
-		recordingUI.Hide()
-		stateMu.Unlock()
-
-		// Stop recording and get audio data
-		audioData, err := audioSys.StopRecording()
+		// Read one line (blocks until Enter pressed)
+		line, err := reader.ReadString('\n')
 		if err != nil {
-			errHandler.Error("Failed to stop recording: %v", err)
 			return
 		}
 
-		if len(audioData) == 0 {
-			log.Printf("No audio recorded")
-			return
+		// Only react to pure Enter key
+		if strings.TrimSpace(line) == "" {
+			app.toggleRecording()
 		}
+	}
+}
 
-		// Send to transcription
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+func (app *VoiceTypeApp) toggleRecording() {
+	app.mu.Lock()
+	recording := app.isRecording
+	app.mu.Unlock()
 
-			notifier.Notify("Transcribing...", "Processing your speech")
+	if recording {
+		app.stopRecording()
+	} else {
+		app.startRecording()
+	}
+}
 
-			// Transcribe audio
-			text, err := apiClient.Transcribe(ctx, audioData)
-			if err != nil {
-				errHandler.Error("Transcription failed: %v", err)
-				notifier.Notify("Transcription Failed", err.Error())
-				return
-			}
+func (app *VoiceTypeApp) startRecording() {
+	if err := app.audioSys.StartRecording(); err != nil {
+		log.Printf("❌ Recording error: %v", err)
+		app.updateUI("❌", "Error")
+		return
+	}
 
-			if text == "" {
-				log.Printf("No text detected in audio")
-				return
-			}
+	app.mu.Lock()
+	app.isRecording = true
+	app.mu.Unlock()
 
-			// Copy to clipboard and paste
-			if err := clip.SetAndPaste(ctx, text); err != nil {
-				errHandler.Error("Failed to paste text: %v", err)
-				notifier.Notify("Paste Error", "Failed to insert text")
-				return
-			}
+	app.updateUI("🔴", "Recording...")
+	log.Println("🎤 Recording... (press Enter to stop)")
+}
 
-			log.Printf("Successfully transcribed and pasted: %s", text)
-		}()
-	})
+func (app *VoiceTypeApp) stopRecording() {
+	audioData, err := app.audioSys.StopRecording()
+	if err != nil {
+		log.Printf("❌ Stop error: %v", err)
+		app.mu.Lock()
+		app.isRecording = false
+		app.mu.Unlock()
+		app.updateUI("🎤", "Ready")
+		return
+	}
 
-	// Handle shutdown signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	app.mu.Lock()
+	app.isRecording = false
+	app.mu.Unlock()
 
+	if len(audioData) == 0 {
+		log.Println("⚠️ No audio recorded")
+		app.updateUI("🎤", "Ready")
+		return
+	}
+
+	log.Printf("⏹️ Stopped (%d bytes, transcribing...)", len(audioData))
+	app.updateUI("⏳", "Transcribing...")
+
+	// Transcribe in background
 	go func() {
-		<-sigChan
-		log.Println("Shutdown signal received, cleaning up...")
-		cancel()
-		hotkeyListener.Close()
-		audioSys.Close()
+		text, err := app.apiClient.Transcribe(app.ctx, audioData)
+		if err != nil {
+			log.Printf("❌ Transcription failed: %v", err)
+			app.updateUI("❌", "Error")
+			return
+		}
+
+		if text == "" {
+			log.Println("⚠️ No speech detected")
+			app.updateUI("🎤", "Ready")
+			return
+		}
+
+		log.Printf("✅ \"%s\"", text)
+
+		if err := app.clip.SetAndPaste(app.ctx, text); err != nil {
+			log.Printf("❌ Paste failed: %v", err)
+			app.updateUI("❌", "Paste error")
+			return
+		}
+
+		log.Println("📋 Text pasted!")
+		app.updateUI("✅", "Done: "+text[:min(20, len(text))]+"...")
 	}()
 
-	log.Println("VoiceType is running. Press and hold the hotkey to record.")
-	log.Printf("Hotkey: %s", cfg.Hotkey)
-	log.Println("Press Ctrl+C to exit")
+	// Reset to ready after delay
+	time.AfterFunc(3*time.Second, func() {
+		app.mu.Lock()
+		if !app.isRecording {
+			app.updateUI("🎤", "Ready")
+		}
+		app.mu.Unlock()
+	})
+}
 
-	// Wait for completion
-	wg.Wait()
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
-	log.Println("VoiceType shutdown complete")
+func (app *VoiceTypeApp) updateUI(icon, status string) {
+	fyne.DoAndWait(func() {
+		if app.icon != nil {
+			app.icon.Text = icon
+		}
+		if app.statusLabel != nil {
+			app.statusLabel.Text = status
+		}
+	})
+}
+
+func (app *VoiceTypeApp) createWindow() {
+	app.window = app.a.NewWindow("VoiceType")
+	app.window.SetFixedSize(true)
+	app.window.Resize(fyne.NewSize(280, 140))
+	app.window.CenterOnScreen()
+	app.window.SetCloseIntercept(func() {
+		fyne.DoAndWait(func() {
+			app.window.Hide()
+		})
+	})
+
+	app.icon = canvas.NewText("🎤", &color.RGBA{R: 100, G: 200, B: 100, A: 255})
+	app.icon.Alignment = fyne.TextAlignCenter
+	app.icon.TextSize = 48
+
+	app.statusLabel = widget.NewLabel("Ready")
+	app.statusLabel.Alignment = fyne.TextAlignCenter
+	app.statusLabel.TextStyle = fyne.TextStyle{Bold: true}
+
+	instr := canvas.NewText("Press ENTER to record", &color.RGBA{R: 150, G: 150, B: 150, A: 255})
+	instr.Alignment = fyne.TextAlignCenter
+	instr.TextSize = 12
+
+	content := container.NewVBox(
+		container.NewCenter(app.icon),
+		container.NewCenter(app.statusLabel),
+		layout.NewSpacer(),
+		container.NewCenter(instr),
+	)
+
+	app.window.SetContent(content)
+}
+
+func (app *VoiceTypeApp) shutdown() {
+	log.Println("Shutting down...")
+	app.cancel()
+	app.audioSys.Close()
+	if app.window != nil {
+		app.window.Close()
+	}
+	log.Println("Done")
+}
+
+func getConfigPath() string {
+	home, _ := os.UserHomeDir()
+	return home + "/" + configFile
+}
+
+func loadAPIKey() string {
+	path := getConfigPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func saveAPIKey(key string) {
+	path := getConfigPath()
+	os.WriteFile(path, []byte(key), 0600)
+}
+
+func askAPIKey() string {
+	fmt.Println()
+	fmt.Println("========================================")
+	fmt.Println("  VoiceType - First Time Setup")
+	fmt.Println("========================================")
+	fmt.Println()
+	fmt.Println("Enter your Groq API key:")
+	fmt.Println("(Get it from https://console.groq.com/)")
+	fmt.Println()
+	fmt.Print("GROQ_API_KEY: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	key, _ := reader.ReadString('\n')
+	key = strings.TrimSpace(key)
+
+	if key == "" {
+		log.Fatal("Error: API key is required")
+	}
+
+	return key
 }
