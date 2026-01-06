@@ -89,7 +89,7 @@ func main() {
 	app.hotkey = hotkey.NewListener(nil)
 	app.ctx, app.cancel = context.WithCancel(context.Background())
 
-	if err := app.hotkey.Initialize("ctrl+space"); err != nil {
+	if err := app.hotkey.Initialize(app.cfg.Hotkey); err != nil {
 		log.Printf("Hotkey init failed: %v", err)
 	}
 	app.hotkey.OnPress(func() {
@@ -103,7 +103,7 @@ func main() {
 
 	fmt.Println()
 	fmt.Println("VoiceType Minimal is running!")
-	fmt.Println("Toggle with CTRL + SPACE")
+	fmt.Printf("Toggle with %s\n", strings.ToUpper(app.cfg.Hotkey))
 	fmt.Println()
 
 	app.a.Run()
