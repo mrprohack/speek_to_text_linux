@@ -1,10 +1,10 @@
-# 🎙️ VoiceType
+# 🎙️ SpeekToText Linux
 
 **Linux Native • Ultra-Fast • Minimalist One-Shot Speech-to-Text**
 
-VoiceType is a lightweight, Linux-native speech-to-text typing replacement. It allows you to speak and instantly type text into any active application (browser, terminal, editor, or chat) bypassing the clipboard.
+SpeekToText Linux is a lightweight, Linux-native speech-to-text typing replacement. It allows you to speak and instantly type text into any active application (browser, terminal, editor, or chat) bypassing the clipboard.
 
-![VoiceType Pill Design](https://github.com/mrprohack/sst_linux/raw/master/PLAN_NATIVE_GUI.md) *(UI inspired by modern voice assistants)*
+![VoiceType Pill Design](https://github.com/mrprohack/speek_to_text_linux/raw/master/PLAN_NATIVE_GUI.md) *(UI inspired by modern voice assistants)*
 
 ## ✨ Features
 
@@ -32,8 +32,8 @@ VoiceType is a lightweight, Linux-native speech-to-text typing replacement. It a
 1. **Clone the repository**:
 
    ```bash
-   git clone https://github.com/mrprohack/sst_linux.git
-   cd sst_linux
+   git clone https://github.com/mrprohack/speek_to_text_linux.git
+   cd speek_to_text_linux
    ```
 
 2. **Setup your API Key**:
@@ -64,7 +64,7 @@ For a 100% reliable experience on modern Linux (Wayland):
 
 1. Go to **Settings** -> **Keyboard** -> **Custom Shortcuts**.
 2. Add a new shortcut:
-   - **Name**: `VoiceType`
+   - **Name**: `SpeekToText`
    - **Command**: `/path/to/your/VoiceType-gui --toggle`
    - **Shortcut**: `Ctrl + Space`
 3. Now, pressing `Ctrl + Space` once starts recording, and pressing it again stops and types!

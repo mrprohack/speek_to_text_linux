@@ -1,4 +1,4 @@
-module VoiceType
+module speek_to_text_linux
 
 go 1.25.5
 

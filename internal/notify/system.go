@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"VoiceType/pkg/errors"
+	"speek_to_text_linux/pkg/errors"
 )
 
 // Notifier represents the notification system

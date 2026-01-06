@@ -53,7 +53,7 @@ import (
     "net/http"
     "time"
 
-    "VoiceType/pkg/errors"
+    "speek_to_text_linux/pkg/errors"
 )
 // Group: std lib → internal
 ```

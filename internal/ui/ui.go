@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"VoiceType/pkg/errors"
+	"speek_to_text_linux/pkg/errors"
 )
 
 // UI represents the user interface system

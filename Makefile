@@ -1,4 +1,4 @@
-# VoiceType Makefile
+# SpeekToText Linux Makefile
 # Linux Native Speech-to-Text App
 
 # Variables

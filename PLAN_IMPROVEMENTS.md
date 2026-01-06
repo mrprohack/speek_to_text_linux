@@ -157,7 +157,7 @@ internal/hotkey/listener.go   - Wayland polling warning
 ## 5. File Structure
 
 ```
-VoiceType/
+speek_to_text_linux/
 ├── cmd/
 │   ├── voicetype/main.go         # CLI version
 │   └── voicetype-gui/main.go     # GUI version

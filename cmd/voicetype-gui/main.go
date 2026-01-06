@@ -17,12 +17,12 @@ import (
 	"syscall"
 	"time"
 
-	"VoiceType/internal/api"
-	"VoiceType/internal/audio"
-	"VoiceType/internal/clipboard"
-	"VoiceType/internal/hotkey"
-	"VoiceType/internal/ui"
-	"VoiceType/pkg/config"
+	"speek_to_text_linux/internal/api"
+	"speek_to_text_linux/internal/audio"
+	"speek_to_text_linux/internal/clipboard"
+	"speek_to_text_linux/internal/hotkey"
+	"speek_to_text_linux/internal/ui"
+	"speek_to_text_linux/pkg/config"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"

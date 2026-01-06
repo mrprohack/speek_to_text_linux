@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"time"
 
-	"VoiceType/pkg/errors"
+	"speek_to_text_linux/pkg/errors"
 )
 
 // System represents the audio capture system

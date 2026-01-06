@@ -12,8 +12,8 @@ import (
 	"os"
 	"time"
 
-	"VoiceType/pkg/errors"
-	"VoiceType/pkg/wav"
+	"speek_to_text_linux/pkg/errors"
+	"speek_to_text_linux/pkg/wav"
 )
 
 // Client represents the Groq API client

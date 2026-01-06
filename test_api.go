@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"VoiceType/internal/api"
-	"VoiceType/pkg/errors"
+	"speek_to_text_linux/internal/api"
+	"speek_to_text_linux/pkg/errors"
 )
 
 func main() {

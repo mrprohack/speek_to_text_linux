@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"VoiceType/pkg/errors"
+	"speek_to_text_linux/pkg/errors"
 )
 
 type Listener struct {
