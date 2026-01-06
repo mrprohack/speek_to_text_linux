@@ -20,11 +20,11 @@ SpeekToText Linux is a lightweight, Linux-native speech-to-text typing replaceme
 ### Prerequisites
 
 - **OS**: Linux (X11 or Wayland)
-- **Dependencies**: `xdotool`, `xinput`, `wl-copy` (Wayland), `wtype` (Wayland)
+- **Dependencies**: `xdotool`, `xinput`, `wtype` (Wayland)
 
   ```bash
   # Debian/Ubuntu
-  sudo apt install xdotool xinput wl-clipboard wtype
+  sudo apt install xdotool xinput wtype
   ```
 
 ### Installation

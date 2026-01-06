@@ -18,8 +18,8 @@ const (
 	ErrorTypeAudio
 	// ErrorTypeAPI represents API-related errors
 	ErrorTypeAPI
-	// ErrorTypeClipboard represents clipboard-related errors
-	ErrorTypeClipboard
+	// ErrorTypeTyping represents typing-related errors
+	ErrorTypeTyping
 	// ErrorTypeHotkey represents hotkey-related errors
 	ErrorTypeHotkey
 	// ErrorTypeUI represents UI-related errors
@@ -153,6 +153,5 @@ var (
 	ErrRateLimited      = fmt.Errorf("rate limited")
 	ErrAudioTooShort    = fmt.Errorf("audio recording is too short")
 	ErrNoMicrophone     = fmt.Errorf("no microphone found")
-	ErrClipboardFailed  = fmt.Errorf("clipboard operation failed")
-	ErrPasteFailed      = fmt.Errorf("paste operation failed")
+	ErrTypingFailed     = fmt.Errorf("typing operation failed")
 )

@@ -14,8 +14,9 @@ import (
 
 	"speek_to_text_linux/internal/api"
 	"speek_to_text_linux/internal/audio"
-	"speek_to_text_linux/internal/clipboard"
+	"speek_to_text_linux/internal/typing"
 	"speek_to_text_linux/pkg/config"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
@@ -33,7 +34,7 @@ type VoiceTypeApp struct {
 	cfg         *config.Config
 	audioSys    *audio.System
 	apiClient   *api.Client
-	clip        *clipboard.System
+	typer       *typing.System
 	ctx         context.Context
 	cancel      context.CancelFunc
 	isRecording bool
@@ -80,7 +81,7 @@ func main() {
 	}
 
 	app.apiClient = api.NewClient(cfg.GROQ_API_KEY, nil)
-	app.clip = clipboard.NewSystem(nil)
+	app.typer = typing.NewSystem()
 	app.ctx, app.cancel = context.WithCancel(context.Background())
 
 	// Create window
@@ -192,9 +193,9 @@ func (app *VoiceTypeApp) stopRecording() {
 
 		log.Printf("✅ \"%s\"", text)
 
-		if err := app.clip.SetAndPaste(app.ctx, text); err != nil {
-			log.Printf("❌ Paste failed: %v", err)
-			app.updateUI("❌", "Paste error")
+		if err := app.typer.TypeText(app.ctx, text); err != nil {
+			log.Printf("❌ Type error: %v", err)
+			app.updateUI("❌", "Type error")
 			return
 		}
 

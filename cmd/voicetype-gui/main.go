@@ -19,8 +19,8 @@ import (
 
 	"speek_to_text_linux/internal/api"
 	"speek_to_text_linux/internal/audio"
-	"speek_to_text_linux/internal/clipboard"
 	"speek_to_text_linux/internal/hotkey"
+	"speek_to_text_linux/internal/typing"
 	"speek_to_text_linux/internal/ui"
 	"speek_to_text_linux/pkg/config"
 
@@ -40,7 +40,7 @@ type VoiceTypeApp struct {
 	cfg          *config.Config
 	audioSys     *audio.System
 	apiClient    *api.Client
-	clip         *clipboard.System
+	typer        *typing.System
 	hotkey       *hotkey.Listener
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -142,7 +142,7 @@ func main() {
 	}
 
 	app.apiClient = api.NewClient(cfg.GROQ_API_KEY, nil)
-	app.clip = clipboard.NewSystem(nil)
+	app.typer = typing.NewSystem()
 	app.hotkey = hotkey.NewListener(nil)
 	app.ctx, app.cancel = context.WithCancel(context.Background())
 
@@ -345,7 +345,7 @@ func (app *VoiceTypeApp) stopRecording() {
 			app.statusIcon.Refresh()
 		})
 
-		if err := app.clip.TypeDirectly(app.ctx, text); err != nil {
+		if err := app.typer.TypeText(app.ctx, text); err != nil {
 			log.Printf("Typing failed: %v", err)
 			app.safeUIUpdate(func() {
 				app.a.Quit()

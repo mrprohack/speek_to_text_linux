@@ -1,6 +1,7 @@
 # VoiceType - Improvement Plan
 
 ## Current Status
+
 ✅ Working core functionality  
 ❌ Some bugs on shutdown  
 ❌ Basic logging  
@@ -11,12 +12,14 @@
 ## 1. Better Logging System
 
 ### Goals
+
 - Structured JSON logs for easy parsing
 - Log levels: DEBUG, INFO, WARN, ERROR
 - Log to file + console
 - Test mode with verbose output
 
 ### Implementation
+
 ```go
 // New logging package
 type Logger struct {
@@ -38,6 +41,7 @@ func (l *Logger) Error(msg string, args ...)
 ```
 
 ### Log Format
+
 ```
 2026-01-06T13:22:53Z [INFO] audio: Audio system initialized with device: default
 2026-01-06T13:22:53Z [DEBUG] hotkey: Polling for key: Ctrl+Space
@@ -49,6 +53,7 @@ func (l *Logger) Error(msg string, args ...)
 ## 2. Testing Tools
 
 ### CLI Test Mode
+
 ```bash
 # Test audio input
 ./VoiceType --test-audio
@@ -64,6 +69,7 @@ func (l *Logger) Error(msg string, args ...)
 ```
 
 ### Test Audio Script
+
 ```bash
 #!/bin/bash
 # test_voicetype.sh
@@ -96,6 +102,7 @@ echo "=== Tests Complete ==="
 ## 3. Enhanced GUI
 
 ### Better Popup Design
+
 ```
 ┌─────────────────────────┐
 │     🎙️ VoiceType        │
@@ -111,6 +118,7 @@ echo "=== Tests Complete ==="
 ```
 
 ### Features to Add
+
 1. **Recording timer** - Show duration
 2. **Sound level meter** - Real-time audio visualization  
 3. **Transcription preview** - Show partial results while recording
@@ -119,6 +127,7 @@ echo "=== Tests Complete ==="
 6. **Minimize to tray** - Keep running in background
 
 ### GUI Menu
+
 ```
 File:
   - Settings...
@@ -139,6 +148,7 @@ Help:
 ## 4. Bug Fixes
 
 ### Critical Bugs
+
 | Bug | Fix | Priority |
 |-----|-----|----------|
 | Fyne thread error on shutdown | Use proper goroutine sync | HIGH |
@@ -146,6 +156,7 @@ Help:
 | Audio device selection | Add device picker dialog | MEDIUM |
 
 ### Bug Tracking
+
 ```
 cmd/voicetype-gui/main.go:528  - Fyne.Do[AndWait] error
 cmd/voicetype-gui/main.go:281  - Fyne thread error
@@ -164,9 +175,9 @@ speek_to_text_linux/
 ├── internal/
 │   ├── api/client.go             # API client
 │   ├── audio/system.go           # Audio capture
-│   ├── clipboard/system.go       # Clipboard
 │   ├── hotkey/listener.go        # Hotkey detection
-│   └── logger/                   # NEW: Logging package
+│   ├── logger/                   # NEW: Logging package
+│   └── typing/system.go          # Direct typing
 ├── pkg/
 │   ├── config/config.go          # Config
 │   └── errors/handler.go         # Errors
@@ -184,6 +195,7 @@ speek_to_text_linux/
 ## 6. Implementation Tasks
 
 ### Phase 1: Logging (Day 1)
+
 - [ ] Create `internal/logger` package
 - [ ] Add log levels
 - [ ] Add file output
@@ -191,6 +203,7 @@ speek_to_text_linux/
 - [ ] Add `--log-file` flag
 
 ### Phase 2: Testing (Day 2)
+
 - [ ] Create `test/test_audio.sh`
 - [ ] Create `test/test_api.sh`  
 - [ ] Add `--test-audio` flag
@@ -198,6 +211,7 @@ speek_to_text_linux/
 - [ ] Add `--test-all` flag
 
 ### Phase 3: GUI Improvements (Day 3)
+
 - [ ] Add recording timer
 - [ ] Add sound level meter
 - [ ] Add settings dialog
@@ -205,6 +219,7 @@ speek_to_text_linux/
 - [ ] Fix shutdown bugs
 
 ### Phase 4: Bug Fixes (Day 4)
+
 - [ ] Fix Fyne thread error
 - [ ] Add ydotool support for Wayland
 - [ ] Add device picker
@@ -215,6 +230,7 @@ speek_to_text_linux/
 ## 7. Commands Reference
 
 ### Current Commands
+
 ```bash
 ./VoiceType           # CLI version
 ./VoiceType-gui       # GUI version
@@ -224,6 +240,7 @@ speek_to_text_linux/
 ```
 
 ### New Commands (Proposed)
+
 ```bash
 ./VoiceType --verbose              # Debug logs
 ./VoiceType --log-file=app.log     # Save logs to file

@@ -3,6 +3,7 @@
 Quick reference for agentic coding agents working on VoiceType.
 
 ## Build Commands
+
 ```bash
 make build          # Standard build
 make build-debug    # With debug symbols
@@ -11,6 +12,7 @@ make clean          # Clean artifacts
 ```
 
 ## Test Commands
+
 ```bash
 make test           # All tests
 make test-coverage  # With coverage
@@ -22,6 +24,7 @@ make verify         # Build + tests
 ```
 
 ## Code Quality
+
 ```bash
 make fmt            # Format code
 make fmt-check      # Check formatting
@@ -30,6 +33,7 @@ make lint           # Run linter
 ```
 
 ## Run the App
+
 ```bash
 export GROQ_API_KEY="your_key"
 ./VoiceType -hotkey=F12 -v -no-notify -device=hw:0
@@ -38,11 +42,13 @@ export GROQ_API_KEY="your_key"
 ## Code Style
 
 ### Project Structure
+
 - **cmd/**: Main entry point
-- **internal/**: Private code (api, audio, clipboard, hotkey, notify, ui)
+- **internal/**: Private code (api, audio, hotkey, notify, typing, ui)
 - **pkg/**: Public libraries (config, errors, wav)
 
 ### Imports
+
 ```go
 import (
     "bytes"
@@ -59,6 +65,7 @@ import (
 ```
 
 ### Naming
+
 - **Packages**: lowercase (api, wav, config)
 - **Types**: PascalCase (Client, Response, System)
 - **Variables**: camelCase (httpClient, audioBuffer)
@@ -67,6 +74,7 @@ import (
 - **Interfaces**: -er suffix (Reader, Writer)
 
 ### Error Handling
+
 - Use `*errors.Error` from `pkg/errors`
 - Pass `*errors.Handler` to components
 - Log: `errHandler.Error("operation failed: %v", err)`
@@ -75,6 +83,7 @@ import (
 - Never suppress errors with `_`
 
 ### Types
+
 ```go
 // Unexported fields with public getters
 type Client struct {
@@ -92,11 +101,13 @@ func NewClient(apiKey string, errHandler *errors.Handler) *Client
 ```
 
 ### Context
+
 - Pass `context.Context` as first parameter
 - Use `context.Background()` for top-level
 - Check cancellation in long-running ops
 
 ### Concurrency
+
 - Goroutines for I/O (API, audio)
 - `sync.WaitGroup` for sync
 - `sync.Mutex` for shared state
@@ -104,18 +115,21 @@ func NewClient(apiKey string, errHandler *errors.Handler) *Client
 - Avoid goroutine leaks
 
 ### Configuration
+
 - Environment variables for secrets (GROQ_API_KEY)
 - `pkg/config.Load()` for config
 - Environment variable overrides
 - Default values for optional config
 
 ### Documentation
+
 - Package doc on first line
 - Public function docs with params/returns
 - Complex logic needs inline comments
 - Update TODOs: "TODO: [desc] - [issue]"
 
 ### Testing
+
 - Test files: `*_test.go` in same package
 - Test functions: `TestFunctionName`
 - Table-driven tests for multiple scenarios
@@ -123,6 +137,7 @@ func NewClient(apiKey string, errHandler *errors.Handler) *Client
 - Aim for >80% coverage on pkg
 
 ### Security
+
 - Never log secrets/API keys
 - Environment variables for sensitive data
 - Clear sensitive data from memory
@@ -130,18 +145,21 @@ func NewClient(apiKey string, errHandler *errors.Handler) *Client
 - No telemetry/analytics
 
 ### Performance
+
 - Reuse buffers
 - Stream data (don't load entirely)
 - Profile before optimizing
 - Target: <50MB RAM, <1s latency
 
 ## Important Notes
+
 - **API Key**: Requires `GROQ_API_KEY` env var
 - **Environment**: Needs X11/Wayland display
 - **Platform**: Linux-only (X11/Wayland)
 - **Privacy**: Zero storage, RAM-only processing
 
 ## File Paths
+
 - Main: `cmd/voicetype/main.go`
 - Tests: `pkg/*/*_test.go`
 - Build: `Makefile`
