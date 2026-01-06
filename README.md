@@ -1,29 +1,30 @@
 # 🎙️ VoiceType
 
-**Linux Native • Ultra-Fast • Minimalist Speech-to-Text**
+**Linux Native • Ultra-Fast • Minimalist One-Shot Speech-to-Text**
 
-VoiceType is a lightweight, Linux-native speech-to-text typing replacement. It allows you to speak and instantly paste text into any active application (browser, terminal, editor, or chat) using a global hotkey.
+VoiceType is a lightweight, Linux-native speech-to-text typing replacement. It allows you to speak and instantly type text into any active application (browser, terminal, editor, or chat) bypassing the clipboard.
 
 ![VoiceType Pill Design](https://github.com/mrprohack/sst_linux/raw/master/PLAN_NATIVE_GUI.md) *(UI inspired by modern voice assistants)*
 
 ## ✨ Features
 
+- **One-Shot Mode**: Launches, records immediately, and quits automatically after typing. Zero background overhead.
+- **Direct Typing**: Transcribes your voice and "types" it directly at your cursor. **Bypasses the clipboard** so your copied links/passwords are safe.
 - **Ultra-Fast**: Perceived latency of <1 second using Groq's Whisper API.
-- **Minimalist Pill UI**: A beautiful, borderless, floating pill that shows real-time wave animations.
-- **Global Hotkey**: Press `Ctrl + Space` to start speaking, and again to stop and paste.
-- **Privacy First**: Zero local storage. Your audio is processed in RAM and deleted immediately after transcription.
-- **Smart Filtering**: Automatically ignores silence or empty vocalizations to keep your workspace clean.
-- **Always on Top**: The UI stays floating above all windows for quick access.
+- **Minimalist Pill UI**: A beautiful, floating pill that shows real-time wave animations and "Listening..." / "Typing..." status.
+- **Smart Toggle**: Rerunning the app while it's recording acts as a "Stop" command.
+- **Wayland Native**: Optimized for modern Linux distros (Ubuntu, Fedora) using `wtype` and `wl-copy`.
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
 - **OS**: Linux (X11 or Wayland)
-- **Dependencies**: `xclip`, `xdotool`, `xinput`, `wmctrl`
+- **Dependencies**: `xdotool`, `xinput`, `wl-copy` (Wayland), `wtype` (Wayland)
 
   ```bash
-  sudo apt install xclip xdotool xinput wmctrl
+  # Debian/Ubuntu
+  sudo apt install xdotool xinput wl-clipboard wtype
   ```
 
 ### Installation
@@ -42,35 +43,31 @@ VoiceType is a lightweight, Linux-native speech-to-text typing replacement. It a
    export GROQ_API_KEY="your_api_key_here"
    ```
 
-3. **Build & Run**:
+3. **Build**:
 
    ```bash
    make build-gui
-   ./VoiceType-gui
    ```
 
 ## ⌨️ Usage
 
-- **Start/Stop Recording**: Press `Ctrl + Space` (default)
-- **Transcription**: The app will automatically transcribe your voice and paste it at your current cursor position.
-- **Feedback**:
-  - **Pink Border**: Listening...
-  - **Green Border**: Successfully pasted!
-  - **Red Border**: Error (check network or API key).
+### The "One-Shot" Flow
 
-## 🎛️ Customizing Keymap
+1. **Launch**: Run `./VoiceType-gui`. It starts recording **immediately**.
+2. **Stop**: Press `Ctrl + Space` (if configured) or simply **launch the app again**.
+3. **Typing**: The app transcribes and types the text at your cursor.
+4. **Auto-Exit**: The app closes itself 1 second after finishing.
 
-### Option 1: Automatic (Best for X11)
+## 🎛️ Customizing Keymap (Wayland Recommended)
 
-Change the `"hotkey"` value in `~/.config/voicetype/config.json` (e.g., `"f6"`, `"alt+space"`).
-
-### Option 2: System Shortcut (Best for Wayland/Reliability)
-
-On Wayland, background listeners are often restricted. For a 100% reliable "anywhere" experience:
+For a 100% reliable experience on modern Linux (Wayland):
 
 1. Go to **Settings** -> **Keyboard** -> **Custom Shortcuts**.
-2. Add a new shortcut for `/home/mrpro/mygit/sst_linux/VoiceType-gui --toggle`.
-3. Set the key to `Ctrl + Space`.
+2. Add a new shortcut:
+   - **Name**: `VoiceType`
+   - **Command**: `/path/to/your/VoiceType-gui --toggle`
+   - **Shortcut**: `Ctrl + Space`
+3. Now, pressing `Ctrl + Space` once starts recording, and pressing it again stops and types!
 
 ## 🛠️ Build Commands
 
