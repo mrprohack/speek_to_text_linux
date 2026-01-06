@@ -10,14 +10,23 @@ import (
 type VoiceTypeTheme struct{}
 
 func (m VoiceTypeTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
-	if name == theme.ColorNameBackground {
+	// Make everything transparent for a floating wave effect
+	if name == theme.ColorNameBackground ||
+		name == theme.ColorNameOverlayBackground ||
+		name == theme.ColorNameShadow ||
+		name == theme.ColorNameSeparator ||
+		name == theme.ColorNameMenuBackground ||
+		name == theme.ColorNameInputBackground ||
+		name == theme.ColorNameButton ||
+		name == theme.ColorNameDisabledButton ||
+		name == theme.ColorNameHover {
 		return color.Transparent
 	}
 	if name == theme.ColorNamePrimary {
-		return color.RGBA{R: 225, G: 90, B: 164, A: 255} // Signature Pink
+		return color.RGBA{R: 0, G: 200, B: 255, A: 255} // Cyan
 	}
 	if name == theme.ColorNameForeground {
-		return color.Black
+		return color.White
 	}
 	return theme.DefaultTheme().Color(name, theme.VariantDark)
 }

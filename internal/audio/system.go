@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"os/exec"
 	"time"
@@ -145,6 +146,37 @@ func (s *System) GetAudioBuffer() []byte {
 // IsRecording returns whether the system is currently recording
 func (s *System) IsRecording() bool {
 	return s.isRecording
+}
+
+// GetLevel returns the current audio level (0.0 to 1.0)
+func (s *System) GetLevel() float64 {
+	if !s.isRecording || len(s.audioBuffer) < 400 {
+		return 0
+	}
+
+	// Read the last 400 bytes (~12.5ms at 16kHz)
+	buf := s.audioBuffer[len(s.audioBuffer)-400:]
+	var sum float64
+	count := 0
+	for i := 0; i < len(buf)-1; i += 2 {
+		// Convert to int16 (Little Endian)
+		sample := int16(buf[i]) | (int16(buf[i+1]) << 8)
+		f := float64(sample) / 32768.0
+		sum += f * f
+		count++
+	}
+
+	if count == 0 {
+		return 0
+	}
+
+	rms := math.Sqrt(sum / float64(count))
+	// Amplify and clamp
+	level := rms * 5.0
+	if level > 1.0 {
+		level = 1.0
+	}
+	return level
 }
 
 // SampleRate returns the sample rate

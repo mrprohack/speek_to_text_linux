@@ -28,6 +28,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 )
 
 var version = "1.0.0"
@@ -47,7 +48,7 @@ type VoiceTypeApp struct {
 	mu           sync.Mutex
 	window       fyne.Window
 	pillBg       *canvas.Rectangle
-	glowLayers   []*canvas.Rectangle
+	glowLayers   []*canvas.Rectangle // Kept for logic compatibility but will be empty/ignored
 	waveBars     []*canvas.Rectangle
 	status       *canvas.Text
 	anim         *fyne.Animation
@@ -56,6 +57,8 @@ type VoiceTypeApp struct {
 	lastToggle   time.Time
 	winTitle     string
 	isProcessing bool
+	statusIcon   *canvas.Image
+	smoothLevel  float64
 }
 
 func main() {
@@ -253,17 +256,15 @@ func (app *VoiceTypeApp) startRecording() {
 		// Re-apply "Always on top" every time we show, just in case
 		go app.stripDecorations(app.winTitle)
 
-		app.pillBg.StrokeColor = color.RGBA{R: 225, G: 90, B: 164, A: 255}
-		app.status.Text = "Listening..."
-		app.pillBg.Refresh()
+		// New UI uses specific status colors per section
+		app.status.Text = "Listening... "
+		app.statusIcon.Resource = theme.MediaRecordIcon()
+		app.statusIcon.Show()
 		app.status.Refresh()
-		for _, glow := range app.glowLayers {
-			glow.StrokeColor = color.RGBA{R: 225, G: 90, B: 164, A: 60}
-			glow.Refresh()
-		}
+		app.statusIcon.Refresh()
 	})
 	app.startWaveAnimation()
-	app.startPulseAnimation()
+	app.startPulseAnimation(color.RGBA{R: 0, G: 195, B: 255, A: 255})
 
 	log.Println("Recording started")
 }
@@ -294,8 +295,10 @@ func (app *VoiceTypeApp) stopRecording() {
 	}
 
 	app.safeUIUpdate(func() {
-		app.status.Text = "Transcribing..."
+		app.status.Text = "Analyzing... "
+		app.statusIcon.Resource = theme.ViewRefreshIcon() // Spinner-like
 		app.status.Refresh()
+		app.statusIcon.Refresh()
 	})
 
 	app.mu.Lock()
@@ -336,8 +339,10 @@ func (app *VoiceTypeApp) stopRecording() {
 		log.Printf("Transcribed: %s", text)
 
 		app.safeUIUpdate(func() {
-			app.status.Text = "Typing..."
+			app.status.Text = "Typing Result... "
+			app.statusIcon.Resource = theme.HistoryIcon()
 			app.status.Refresh()
+			app.statusIcon.Refresh()
 		})
 
 		if err := app.clip.TypeDirectly(app.ctx, text); err != nil {
@@ -349,10 +354,10 @@ func (app *VoiceTypeApp) stopRecording() {
 		}
 
 		app.safeUIUpdate(func() {
-			app.status.Text = "✓ Done"
-			app.pillBg.StrokeColor = color.RGBA{R: 34, G: 197, B: 94, A: 255}
-			app.pillBg.Refresh()
+			app.status.Text = "✓ Done "
+			app.statusIcon.Resource = theme.ConfirmIcon()
 			app.status.Refresh()
+			app.statusIcon.Refresh()
 		})
 
 		time.Sleep(1200 * time.Millisecond)
@@ -369,13 +374,6 @@ func (app *VoiceTypeApp) resetUI() {
 		app.safeUIUpdate(func() {
 			// Fade out effect start
 			app.status.Text = ""
-			app.pillBg.StrokeColor = color.Black
-			app.pillBg.StrokeWidth = 3
-			for _, glow := range app.glowLayers {
-				glow.StrokeColor = color.Transparent
-				glow.Refresh()
-			}
-			app.pillBg.Refresh()
 			app.status.Refresh()
 
 			// Small delay before hiding to let the user see the "✓" or "Error"
@@ -394,74 +392,54 @@ func (app *VoiceTypeApp) createWindow() {
 	app.winTitle = fmt.Sprintf("VoiceTypeUI_%d", time.Now().UnixNano())
 	app.window = app.a.NewWindow(app.winTitle)
 	app.window.SetFixedSize(true)
-	// Larger window to accommodate the outer glow (shadow)
-	app.window.Resize(fyne.NewSize(320, 110))
-	app.window.CenterOnScreen()
 
-	cream := color.RGBA{R: 255, G: 254, B: 242, A: 255}
+	// Minimal wave + timer window
+	app.window.Resize(fyne.NewSize(350, 50))
 
-	// Create glow layers (stacked rectangles with decreasing alpha)
-	app.glowLayers = make([]*canvas.Rectangle, 4)
-	for i := 0; i < 4; i++ {
-		glow := canvas.NewRectangle(color.Transparent)
-		glow.StrokeWidth = float32(i + 5)
-		glow.StrokeColor = color.Transparent
-		glow.CornerRadius = 38
-		app.glowLayers[i] = glow
-	}
-
-	app.pillBg = canvas.NewRectangle(cream)
-	app.pillBg.StrokeWidth = 3
-	app.pillBg.StrokeColor = color.Black
-	app.pillBg.CornerRadius = 30
-
-	app.status = canvas.NewText("", color.RGBA{R: 80, G: 80, B: 80, A: 255})
-	app.status.TextSize = 14
-	app.status.TextStyle = fyne.TextStyle{Bold: true}
-	app.status.Alignment = fyne.TextAlignCenter
-
-	numBars := 22
+	// Wave Bars (Simple, Clean)
+	numBars := 32
 	app.waveBars = make([]*canvas.Rectangle, numBars)
-	for i := 0; i < numBars; i++ {
-		bar := canvas.NewRectangle(color.Black)
-		bar.SetMinSize(fyne.NewSize(3, 12))
-		bar.Resize(fyne.NewSize(3, 12))
-		bar.CornerRadius = 1.5
-		bar.Hide()
-		app.waveBars[i] = bar
-	}
 
 	waveContainer := container.NewHBox()
-	for _, bar := range app.waveBars {
+	for i := 0; i < numBars; i++ {
+		cyan := color.RGBA{R: 0, G: 200, B: 255, A: 255}
+		bar := canvas.NewRectangle(cyan)
+		bar.SetMinSize(fyne.NewSize(4, 6))
+		bar.Resize(fyne.NewSize(4, 6))
+		bar.CornerRadius = 2
+		bar.Hide()
+		app.waveBars[i] = bar
 		waveContainer.Add(bar)
 	}
 
-	// Layout with Glow -> Pill -> Content
-	glowStack := container.NewMax()
-	for i := len(app.glowLayers) - 1; i >= 0; i-- {
-		glowStack.Add(app.glowLayers[i])
-	}
+	// Timer display (visible, white text)
+	app.status = canvas.NewText("0:00", color.White)
+	app.status.TextSize = 16
+	app.status.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+	app.status.Alignment = fyne.TextAlignCenter
 
-	mainContent := container.NewMax(
-		app.pillBg,
-		container.NewCenter(
-			container.NewVBox(
-				container.NewCenter(waveContainer),
-				container.NewCenter(app.status),
-			),
-		),
+	app.statusIcon = canvas.NewImageFromResource(theme.InfoIcon())
+	app.statusIcon.Hide()
+
+	// Placeholder for pillBg (not visible)
+	app.pillBg = canvas.NewRectangle(color.Transparent)
+
+	// Layout: Wave bars + Timer
+	mainLayout := container.NewHBox(
+		waveContainer,
+		container.NewCenter(app.status),
 	)
 
-	app.window.SetContent(container.NewMax(
-		container.NewPadded(glowStack),
-		container.NewPadded(mainContent),
-	))
+	app.window.SetContent(container.NewCenter(mainLayout))
 
+	// Position at bottom center of screen
 	go func() {
-		time.Sleep(150 * time.Millisecond)
-		for i := 0; i < 3; i++ {
+		time.Sleep(100 * time.Millisecond)
+		for i := 0; i < 4; i++ {
 			app.stripDecorations(app.winTitle)
-			time.Sleep(250 * time.Millisecond)
+			// Move window to bottom center
+			exec.Command("wmctrl", "-r", app.winTitle, "-e", "0,-1,900,-1,-1").Run()
+			time.Sleep(200 * time.Millisecond)
 		}
 	}()
 
@@ -486,15 +464,49 @@ func (app *VoiceTypeApp) startWaveAnimation() {
 
 	startTime := time.Now()
 
-	app.anim = fyne.NewAnimation(time.Millisecond*40, func(f float32) {
+	app.anim = fyne.NewAnimation(time.Millisecond*30, func(f float32) {
+		app.mu.Lock()
+		level := app.audioSys.GetLevel()
+		// Smoothing: move toward target level
+		app.smoothLevel = app.smoothLevel*0.7 + level*0.3
+		app.mu.Unlock()
+
+		center := len(app.waveBars) / 2
 		for i, bar := range app.waveBars {
 			if bar == nil {
 				continue
 			}
 			elapsed := time.Since(startTime).Seconds()
-			offset := float64(i) * 0.25
-			h := 2 + 50*math.Abs(math.Sin(elapsed*8+offset))
-			bar.Resize(fyne.NewSize(3, float32(h)))
+
+			// Symmetric index (distance from center)
+			dist := float64(math.Abs(float64(i - center)))
+			maxDist := float64(center)
+
+			// Gaussian-like falloff for a pill shape
+			falloff := math.Exp(-math.Pow(dist/(maxDist*0.8), 2))
+
+			// Base idle movement
+			idle := 2.0 * math.Sin(elapsed*5+float64(i)*0.2)
+
+			// Vocal reactivity scaling
+			vocal := app.smoothLevel * 60.0 * falloff
+
+			h := 4.0 + math.Abs(idle) + vocal
+
+			// Spectral color shift based on height
+			percent := h / 50.0
+			if percent > 1.0 {
+				percent = 1.0
+			}
+
+			bar.FillColor = color.RGBA{
+				R: uint8(0 + 100*percent),
+				G: uint8(210 - 50*percent),
+				B: 255,
+				A: 255,
+			}
+
+			bar.Resize(fyne.NewSize(2, float32(h)))
 			bar.Refresh()
 		}
 	})
@@ -528,15 +540,19 @@ func (app *VoiceTypeApp) startWaveAnimation() {
 	}()
 }
 
-func (app *VoiceTypeApp) startPulseAnimation() {
-	pink := color.RGBA{R: 225, G: 90, B: 164, A: 255}
-	app.pulseAnim = fyne.NewAnimation(time.Second*2, func(f float32) {
+func (app *VoiceTypeApp) startPulseAnimation(pulseColor color.RGBA) {
+	app.pulseAnim = fyne.NewAnimation(time.Duration(float64(time.Second)*1.5), func(f float32) {
 		app.safeUIUpdate(func() {
-			val := math.Sin(float64(f) * 2 * math.Pi)
-			app.pillBg.StrokeWidth = 3 + 1.2*float32(val)
-			alpha := uint8(100 + 100*val)
+			// Phase-shifted sine for a breathing effect
+			val := math.Sin(float64(f)*2*math.Pi - math.Pi/2)
+			normVal := (val + 1) / 2 // 0 to 1
+
+			app.pillBg.StrokeWidth = 2 + 1.2*float32(normVal)
+			alphaBase := uint8(40 + 80*normVal)
+
 			for i, glow := range app.glowLayers {
-				glow.StrokeColor = color.RGBA{R: pink.R, G: pink.G, B: pink.B, A: uint8(float64(alpha) / float64(i+1))}
+				alpha := uint8(float64(alphaBase) / float64(i+1))
+				glow.StrokeColor = color.RGBA{R: pulseColor.R, G: pulseColor.G, B: pulseColor.B, A: alpha}
 				glow.Refresh()
 			}
 			app.pillBg.Refresh()
