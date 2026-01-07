@@ -66,12 +66,19 @@ func main() {
 	flagDevice := flag.String("device", "", "Audio device")
 	flagToggle := flag.Bool("toggle", false, "Toggle recording on a running instance")
 	flagStop := flag.Bool("stop", false, "Stop a running instance")
+	flagNoReturn := flag.Bool("no-return", false, "Don't press Enter after typing")
 	flag.Parse()
 
 	if *flagHelp {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n", os.Args[0])
 		flag.PrintDefaults()
 		os.Exit(0)
+	}
+
+	cfg, _ := config.Load()
+
+	if *flagNoReturn {
+		cfg.AutoReturn = false
 	}
 
 	pidFile := filepath.Join(os.TempDir(), "voicetype-gui.pid")
@@ -120,7 +127,6 @@ func main() {
 
 	log.Println("VoiceType v" + version + " starting...")
 
-	cfg, _ := config.Load()
 	cfg.AudioDevice = *flagDevice
 
 	apiKey := loadAPIKey()
@@ -345,7 +351,7 @@ func (app *VoiceTypeApp) stopRecording() {
 			app.statusIcon.Refresh()
 		})
 
-		if err := app.typer.TypeText(app.ctx, text); err != nil {
+		if err := app.typer.TypeText(app.ctx, text, app.cfg.AutoReturn); err != nil {
 			log.Printf("Typing failed: %v", err)
 			app.safeUIUpdate(func() {
 				app.a.Quit()

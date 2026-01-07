@@ -16,6 +16,7 @@ type Config struct {
 	Verbose              bool    `json:"verbose"`
 	Model                string  `json:"model"`
 	Temperature          float64 `json:"temperature"`
+	AutoReturn           bool    `json:"auto_return"`
 }
 
 // DefaultConfig returns the default configuration
@@ -25,6 +26,7 @@ func DefaultConfig() *Config {
 		AudioDevice: "",
 		Model:       "whisper-large-v3",
 		Temperature: 0.0,
+		AutoReturn:  true,
 	}
 }
 
@@ -51,6 +53,7 @@ func Load() (*Config, error) {
 				if fileCfg.Model != "" {
 					cfg.Model = fileCfg.Model
 				}
+				cfg.AutoReturn = fileCfg.AutoReturn
 				cfg.DisableNotifications = fileCfg.DisableNotifications
 				cfg.Verbose = fileCfg.Verbose
 				cfg.Temperature = fileCfg.Temperature

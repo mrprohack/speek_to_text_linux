@@ -48,6 +48,7 @@ type VoiceTypeApp struct {
 func main() {
 	flagHelp := flag.Bool("help", false, "Show help")
 	flagDevice := flag.String("device", "", "Audio device")
+	flagNoReturn := flag.Bool("no-return", false, "Don't press Enter after typing")
 	flag.Parse()
 
 	if *flagHelp {
@@ -60,6 +61,9 @@ func main() {
 
 	cfg, _ := config.Load()
 	cfg.AudioDevice = *flagDevice
+	if *flagNoReturn {
+		cfg.AutoReturn = false
+	}
 
 	// Load or ask for API key
 	apiKey := loadAPIKey()
@@ -193,7 +197,7 @@ func (app *VoiceTypeApp) stopRecording() {
 
 		log.Printf("✅ \"%s\"", text)
 
-		if err := app.typer.TypeText(app.ctx, text); err != nil {
+		if err := app.typer.TypeText(app.ctx, text, app.cfg.AutoReturn); err != nil {
 			log.Printf("❌ Type error: %v", err)
 			app.updateUI("❌", "Type error")
 			return
