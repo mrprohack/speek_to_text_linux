@@ -23,10 +23,16 @@ func (m VoiceTypeTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVarian
 		return color.Transparent
 	}
 	if name == theme.ColorNamePrimary {
-		return color.RGBA{R: 0, G: 200, B: 255, A: 255} // Cyan
+		return color.RGBA{R: 0, G: 240, B: 255, A: 255} // Electric Cyan
 	}
 	if name == theme.ColorNameForeground {
 		return color.White
+	}
+	if name == theme.ColorNameSuccess {
+		return color.RGBA{R: 16, G: 185, B: 129, A: 255} // Emerald
+	}
+	if name == theme.ColorNameError {
+		return color.RGBA{R: 239, G: 68, B: 68, A: 255} // Crimson
 	}
 	return theme.DefaultTheme().Color(name, theme.VariantDark)
 }
@@ -41,10 +47,16 @@ func (m VoiceTypeTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
 
 func (m VoiceTypeTheme) Size(name fyne.ThemeSizeName) float32 {
 	if name == theme.SizeNamePadding {
-		return 0 // Total removal of padding for "window-less" feel
+		return 8
 	}
 	if name == theme.SizeNameText {
-		return 12
+		return 14
+	}
+	if name == theme.SizeNameInputRadius {
+		return 22
+	}
+	if name == theme.SizeNameInlineIcon {
+		return 20
 	}
 	return theme.DefaultTheme().Size(name)
 }

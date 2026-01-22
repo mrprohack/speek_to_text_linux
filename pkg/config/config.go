@@ -26,7 +26,7 @@ func DefaultConfig() *Config {
 		AudioDevice: "",
 		Model:       "whisper-large-v3",
 		Temperature: 0.0,
-		AutoReturn:  true,
+		AutoReturn:  false,
 	}
 }
 
@@ -38,25 +38,36 @@ func Load() (*Config, error) {
 	path, err := GetConfigPath()
 	if err == nil {
 		if data, err := os.ReadFile(path); err == nil {
-			var fileCfg Config
-			if err := json.Unmarshal(data, &fileCfg); err == nil {
-				// Merge values from file
-				if fileCfg.GROQ_API_KEY != "" {
-					cfg.GROQ_API_KEY = fileCfg.GROQ_API_KEY
+			// Use a map to check if field exists in JSON
+			var raw map[string]interface{}
+			if err := json.Unmarshal(data, &raw); err == nil {
+				if val, ok := raw["auto_return"]; ok {
+					if b, ok := val.(bool); ok {
+						cfg.AutoReturn = b
+					}
 				}
-				if fileCfg.Hotkey != "" {
-					cfg.Hotkey = fileCfg.Hotkey
+				// Also merge other fields safely
+				if val, ok := raw["groq_api_key"].(string); ok && val != "" {
+					cfg.GROQ_API_KEY = val
 				}
-				if fileCfg.AudioDevice != "" {
-					cfg.AudioDevice = fileCfg.AudioDevice
+				if val, ok := raw["hotkey"].(string); ok && val != "" {
+					cfg.Hotkey = val
 				}
-				if fileCfg.Model != "" {
-					cfg.Model = fileCfg.Model
+				if val, ok := raw["audio_device"].(string); ok && val != "" {
+					cfg.AudioDevice = val
 				}
-				cfg.AutoReturn = fileCfg.AutoReturn
-				cfg.DisableNotifications = fileCfg.DisableNotifications
-				cfg.Verbose = fileCfg.Verbose
-				cfg.Temperature = fileCfg.Temperature
+				if val, ok := raw["model"].(string); ok && val != "" {
+					cfg.Model = val
+				}
+				if val, ok := raw["disable_notifications"].(bool); ok {
+					cfg.DisableNotifications = val
+				}
+				if val, ok := raw["verbose"].(bool); ok {
+					cfg.Verbose = val
+				}
+				if val, ok := raw["temperature"].(float64); ok {
+					cfg.Temperature = val
+				}
 			}
 		}
 	}
