@@ -97,6 +97,10 @@ func (d *draggableBackground) DragEnd() {
 	// Optional: Save position to config
 }
 
+func (d *draggableBackground) TappedSecondary(e *fyne.PointEvent) {
+	d.app.showSettingsWindow()
+}
+
 func main() {
 	initLogger()
 	flagHelp := flag.Bool("help", false, "Show help")
@@ -104,6 +108,7 @@ func main() {
 	flagToggle := flag.Bool("toggle", false, "Toggle recording on a running instance")
 	flagStop := flag.Bool("stop", false, "Stop a running instance")
 	flagNoReturn := flag.Bool("no-return", false, "Don't press Enter after typing")
+	flagSettings := flag.Bool("settings", false, "Show settings window")
 	flag.Parse()
 
 	if *flagHelp {
@@ -113,6 +118,21 @@ func main() {
 	}
 
 	cfg, _ := config.Load()
+
+	if *flagSettings {
+		apiKey := cfg.GROQ_API_KEY
+		if apiKey == "" {
+			apiKey = os.Getenv("GROQ_API_KEY")
+		}
+		app := &VoiceTypeApp{
+			a:   app.NewWithID("com.voicetype.app"),
+			cfg: cfg,
+		}
+		app.audioSys = audio.NewSystem(nil)
+		app.showSettingsWindow()
+		app.a.Run()
+		os.Exit(0)
+	}
 
 	if *flagNoReturn {
 		cfg.AutoReturn = false
@@ -388,12 +408,21 @@ func (app *VoiceTypeApp) stopRecording() {
 		app.safeUIUpdate(func() {
 			app.status.Text = ""
 			app.status.Refresh()
+
+			// Capture target window ID before hiding
+			prevWindowID := app.typer.GetActiveWindowID()
+
 			// Hide window immediately to return focus to the target software
 			app.window.Hide()
+
+			// Actively restore focus to the previous window
+			if prevWindowID != "" {
+				app.typer.ActivateWindow(prevWindowID)
+			}
 		})
 
-		// Delay to let focus land back on the target software (Requested 2s wait)
-		time.Sleep(2000 * time.Millisecond)
+		// Shorter delay since we actively restore focus
+		time.Sleep(500 * time.Millisecond)
 
 		if err := app.typer.TypeText(app.ctx, text, app.cfg.AutoReturn); err != nil {
 			log.Printf("Typing failed: %v", err)
@@ -410,8 +439,7 @@ func (app *VoiceTypeApp) stopRecording() {
 			app.statusIcon.Refresh()
 		})
 
-		// Wait 3 seconds before shutting down (user requested more time to verify)
-		time.Sleep(3000 * time.Millisecond)
+		time.Sleep(600 * time.Millisecond)
 		app.safeUIUpdate(func() {
 			app.a.Quit()
 		})
@@ -457,6 +485,7 @@ func (app *VoiceTypeApp) createWindow() {
 	app.winTitle = fmt.Sprintf("VoiceTypeUI_%d", time.Now().UnixNano())
 	app.window = app.a.NewWindow(app.winTitle)
 	app.window.SetFixedSize(true)
+	app.window.SetPadded(false)
 	app.window.Resize(fyne.NewSize(pillWidth, pillHeight))
 
 	app.winPosX = int((screenSize.Width - pillWidth) / 2)
@@ -498,6 +527,12 @@ func (app *VoiceTypeApp) createWindow() {
 
 	app.window.SetContent(content)
 
+	app.window.Canvas().SetOnTypedKey(func(k *fyne.KeyEvent) {
+		if k.Name == fyne.KeyEscape {
+			app.a.Quit()
+		}
+	})
+
 	go func() {
 		time.Sleep(150 * time.Millisecond)
 		for i := 0; i < 5; i++ {
@@ -511,12 +546,11 @@ func (app *VoiceTypeApp) createWindow() {
 }
 
 func (app *VoiceTypeApp) stripDecorations(title string) {
-	// Motif hints to remove decorations
 	exec.Command("xprop", "-name", title, "-f", "_MOTIF_WM_HINTS", "32c", "-set", "_MOTIF_WM_HINTS", "0x2, 0x0, 0x0, 0x0, 0x0").Run()
-	// Various window state hints
 	exec.Command("wmctrl", "-r", title, "-b", "add,above,skip_taskbar,skip_pager").Run()
-	// Make it a utility/notification window so it doesn't take focus normally
-	exec.Command("xprop", "-name", title, "-f", "_NET_WM_WINDOW_TYPE", "32a", "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_UTILITY").Run()
+	exec.Command("xprop", "-name", title, "-f", "_NET_WM_WINDOW_TYPE", "32a", "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_SPLASH").Run()
+	exec.Command("xprop", "-name", title, "-f", "_NET_WM_STATE", "32a", "-set", "_NET_WM_STATE", "_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER,_NET_WM_STATE_ABOVE").Run()
+	exec.Command("xprop", "-name", title, "-f", "_NET_WM_ALLOWED_ACTIONS", "32a", "-set", "_NET_WM_ALLOWED_ACTIONS", "").Run()
 }
 
 func (app *VoiceTypeApp) fadeInWindow() {
@@ -735,6 +769,85 @@ func askAPIKey() string {
 		return key
 	}
 	return ""
+}
+
+func (app *VoiceTypeApp) showSettingsWindow() {
+	w := app.a.NewWindow("VoiceType Settings")
+
+	keyEntry := widget.NewPasswordEntry()
+	keyEntry.SetText(app.cfg.GROQ_API_KEY)
+	keyEntry.SetPlaceHolder("gsk_...")
+
+	hotkeyEntry := widget.NewEntry()
+	hotkeyEntry.SetText(app.cfg.Hotkey)
+	hotkeyEntry.SetPlaceHolder("ctrl+space")
+
+	devices := app.audioSys.GetDevices()
+	deviceSelect := widget.NewSelect(devices, nil)
+	deviceSelect.SetSelected(app.cfg.AudioDevice)
+	if deviceSelect.Selected == "" && len(devices) > 0 {
+		deviceSelect.SetSelected("default")
+	}
+
+	autoReturnCheck := widget.NewCheck("Auto-press Enter after typing", nil)
+	autoReturnCheck.Checked = app.cfg.AutoReturn
+
+	models := []string{"whisper-large-v3", "distil-whisper-large-v3-en"}
+	modelSelect := widget.NewSelect(models, nil)
+	modelSelect.SetSelected(app.cfg.Model)
+	if modelSelect.Selected == "" {
+		modelSelect.SetSelected("whisper-large-v3")
+	}
+
+	form := widget.NewForm(
+		widget.NewFormItem("GROQ API Key", keyEntry),
+		widget.NewFormItem("Hotkey", hotkeyEntry),
+		widget.NewFormItem("Audio Device", deviceSelect),
+		widget.NewFormItem("Model", modelSelect),
+		widget.NewFormItem("", autoReturnCheck),
+	)
+
+	saveBtn := widget.NewButton("Save & Exit", func() {
+		app.cfg.GROQ_API_KEY = keyEntry.Text
+		app.cfg.Hotkey = hotkeyEntry.Text
+		app.cfg.AudioDevice = deviceSelect.Selected
+		app.cfg.AutoReturn = autoReturnCheck.Checked
+		app.cfg.Model = modelSelect.Selected
+
+		if err := app.cfg.Save(""); err != nil {
+			log.Printf("Failed to save config: %v", err)
+		} else {
+			log.Println("Config saved successfully")
+		}
+		app.a.Quit()
+	})
+	saveBtn.Importance = widget.HighImportance
+
+	title := widget.NewLabelWithStyle("VoiceType Settings", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+
+	content := container.NewVBox(
+		title,
+		widget.NewSeparator(),
+		form,
+		layout.NewSpacer(),
+		saveBtn,
+	)
+
+	bg := canvas.NewRectangle(color.RGBA{R: 25, G: 25, B: 30, A: 255})
+	w.SetContent(container.NewStack(bg, container.NewPadded(content)))
+
+	w.Resize(fyne.NewSize(420, 320))
+	w.SetFixedSize(true)
+	w.CenterOnScreen()
+
+	go func() {
+		for i := 0; i < 5; i++ {
+			exec.Command("wmctrl", "-r", "VoiceType Settings", "-b", "add,above").Run()
+			time.Sleep(200 * time.Millisecond)
+		}
+	}()
+
+	w.Show()
 }
 
 func initLogger() {

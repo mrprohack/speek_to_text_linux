@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"speek_to_text_linux/pkg/errors"
@@ -244,6 +245,33 @@ func (s *System) SaveToFile(filename string) error {
 
 	log.Printf("Saved audio to %s (%d bytes)", filename, fileSize)
 	return nil
+}
+
+// GetDevices returns a list of available ALSA recording devices
+func (s *System) GetDevices() []string {
+	var devices []string
+	cmd := exec.Command("arecord", "-L")
+	output, err := cmd.Output()
+	if err != nil {
+		return []string{"default"}
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			continue
+		}
+		device := strings.TrimSpace(line)
+		// ALSA device names don't have spaces and are usually at the start of the line
+		if !strings.Contains(device, " ") {
+			devices = append(devices, device)
+		}
+	}
+
+	if len(devices) == 0 {
+		return []string{"default"}
+	}
+	return devices
 }
 
 func writeInt16(file *os.File, v int16) {
