@@ -489,7 +489,7 @@ func (app *VoiceTypeApp) createWindow() {
 	app.window.Resize(fyne.NewSize(pillWidth, pillHeight))
 
 	app.winPosX = int((screenSize.Width - pillWidth) / 2)
-	app.winPosY = int(screenSize.Height - pillHeight - 80)
+	app.winPosY = int(screenSize.Height - pillHeight - 60)
 
 	numBars := 12
 	app.waveBars = make([]*canvas.Rectangle, numBars)
@@ -534,11 +534,16 @@ func (app *VoiceTypeApp) createWindow() {
 	})
 
 	go func() {
-		time.Sleep(150 * time.Millisecond)
-		for i := 0; i < 5; i++ {
+		time.Sleep(100 * time.Millisecond)
+		for i := 0; i < 10; i++ {
 			app.stripDecorations(app.winTitle)
 			exec.Command("wmctrl", "-r", app.winTitle, "-e", fmt.Sprintf("0,%d,%d,-1,-1", app.winPosX, app.winPosY)).Run()
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(200 * time.Millisecond)
+			if i == 5 {
+				app.safeUIUpdate(func() {
+					app.window.SetTitle("")
+				})
+			}
 		}
 	}()
 
@@ -546,11 +551,28 @@ func (app *VoiceTypeApp) createWindow() {
 }
 
 func (app *VoiceTypeApp) stripDecorations(title string) {
-	exec.Command("xprop", "-name", title, "-f", "_MOTIF_WM_HINTS", "32c", "-set", "_MOTIF_WM_HINTS", "0x2, 0x0, 0x0, 0x0, 0x0").Run()
-	exec.Command("wmctrl", "-r", title, "-b", "add,above,skip_taskbar,skip_pager").Run()
-	exec.Command("xprop", "-name", title, "-f", "_NET_WM_WINDOW_TYPE", "32a", "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_SPLASH").Run()
-	exec.Command("xprop", "-name", title, "-f", "_NET_WM_STATE", "32a", "-set", "_NET_WM_STATE", "_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER,_NET_WM_STATE_ABOVE").Run()
-	exec.Command("xprop", "-name", title, "-f", "_NET_WM_ALLOWED_ACTIONS", "32a", "-set", "_NET_WM_ALLOWED_ACTIONS", "").Run()
+	if title == "" {
+		return
+	}
+	var winID string
+	out, err := exec.Command("xdotool", "search", "--name", title).Output()
+	if err == nil {
+		winID = strings.TrimSpace(string(out))
+		if strings.Contains(winID, "\n") {
+			winID = strings.Split(winID, "\n")[0]
+		}
+	}
+
+	if winID != "" {
+		exec.Command("xprop", "-id", winID, "-f", "_MOTIF_WM_HINTS", "32c", "-set", "_MOTIF_WM_HINTS", "0x2, 0x0, 0x0, 0x0, 0x0").Run()
+		exec.Command("xprop", "-id", winID, "-f", "_NET_WM_WINDOW_TYPE", "32a", "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION").Run()
+		exec.Command("xprop", "-id", winID, "-f", "_NET_WM_STATE", "32a", "-set", "_NET_WM_STATE", "_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER,_NET_WM_STATE_ABOVE,_NET_WM_STATE_STAY_ON_TOP").Run()
+		exec.Command("xprop", "-id", winID, "-f", "_NET_WM_ALLOWED_ACTIONS", "32a", "-set", "_NET_WM_ALLOWED_ACTIONS", "").Run()
+	} else {
+		exec.Command("xprop", "-name", title, "-f", "_MOTIF_WM_HINTS", "32c", "-set", "_MOTIF_WM_HINTS", "0x2, 0x0, 0x0, 0x0, 0x0").Run()
+		exec.Command("xprop", "-name", title, "-f", "_NET_WM_WINDOW_TYPE", "32a", "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION").Run()
+		exec.Command("wmctrl", "-r", title, "-b", "add,above,skip_taskbar,skip_pager").Run()
+	}
 }
 
 func (app *VoiceTypeApp) fadeInWindow() {
