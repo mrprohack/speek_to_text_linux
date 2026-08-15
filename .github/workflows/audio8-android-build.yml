@@ -2,8 +2,7 @@ name: Audio8 Android APK
 
 on:
   push:
-    branches:
-      - build/audio8-android-20260815
+    branches: [build/audio8-android-20260815]
   workflow_dispatch:
 
 permissions:
@@ -14,25 +13,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout build branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Restore and verify Audio8 Android source
+      - name: Restore and patch source
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .ci/audio8/work
-          cat .ci/audio8/source.b64.part1 .ci/audio8/source.b64.part2 .ci/audio8/source.b64.part3 .ci/audio8/source.b64.part4 \
-            | base64 -d > .ci/audio8/source.tar.xz
+          cat .ci/audio8/source.b64.part{1,2,3,4} | base64 -d > .ci/audio8/source.tar.xz
           echo 'e7cf4834f0e39ebada602c0e36905a9cbc557b743ae3dc2a3552eb40f8463e60  .ci/audio8/source.tar.xz' | sha256sum -c -
           tar -xJf .ci/audio8/source.tar.xz -C .ci/audio8/work
-          test -f .ci/audio8/work/audio8_offline_tts_android/pubspec.yaml
-          chmod +x .ci/audio8/work/audio8_offline_tts_android/tools/*.sh
-
-      - name: Apply widget-test regression fix
-        shell: bash
-        run: |
-          cat > .ci/audio8/work/audio8_offline_tts_android/test/smoke_test.dart <<'DART'
+          PROJECT=.ci/audio8/work/audio8_offline_tts_android
+          chmod +x "$PROJECT"/tools/*.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('.ci/audio8/work/audio8_offline_tts_android')
+          p=root/'android/app/build.gradle.kts'
+          s=p.read_text().replace('kotlin { compilerOptions { jvmTarget=org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17 } }\n','')
+          p.write_text(s)
+          p=root/'android/settings.gradle.kts'
+          s=p.read_text().replace('; id("org.jetbrains.kotlin.android") version "2.3.20" apply false','')
+          p.write_text(s)
+          PY
+          cat > "$PROJECT/test/smoke_test.dart" <<'DART'
           import 'package:audio8_offline_tts/main.dart' as app;
           import 'package:flutter/material.dart';
           import 'package:flutter/services.dart';
@@ -66,7 +69,6 @@ jobs:
             testWidgets('first launch guides the user to install the model', (tester) async {
               app.main();
               await tester.pumpAndSettle();
-
               expect(find.text('Audio8 Offline'), findsOneWidget);
               expect(find.text('Step 1 of 2 · Install the Audio8 model'), findsOneWidget);
               expect(find.text('Setup'), findsOneWidget);
@@ -82,16 +84,12 @@ jobs:
                 'lastAudioExists': false,
                 'modelFingerprint': 'test',
               };
-
               app.main();
               await tester.pumpAndSettle();
-
               expect(find.text('Offline ready'), findsOneWidget);
               expect(find.text('Test Voice'), findsOneWidget);
-
               await tester.drag(find.byType(ListView).first, const Offset(0, -650));
               await tester.pumpAndSettle();
-
               expect(find.text('Generate speech'), findsOneWidget);
               final button = tester.widget<FilledButton>(
                 find.widgetWithText(FilledButton, 'Generate speech'),
@@ -101,43 +99,38 @@ jobs:
           }
           DART
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v3
 
-      - name: Install Android 36 SDK components
-        shell: bash
+      - name: Install Android 36 SDK
         run: |
-          set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0'
 
-      - name: Set up Flutter 3.44.8
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.8'
           channel: stable
           cache: true
 
-      - name: Verify Flutter toolchain
+      - name: Verify toolchain
         run: |
           flutter --version
           flutter doctor -v
 
-      - name: Core Kotlin verification
+      - name: Verify Kotlin core
         working-directory: .ci/audio8/work/audio8_offline_tts_android
         run: ./tools/verify_core.sh
 
-      - name: Project structure verification
+      - name: Verify project structure
         working-directory: .ci/audio8/work/audio8_offline_tts_android
         run: python3 tools/verify_project.py
 
-      - name: Flutter analyze, tests, and release APK
+      - name: Analyze, test, and build release APK
         working-directory: .ci/audio8/work/audio8_offline_tts_android
         run: ./tools/build_android.sh
 
@@ -145,18 +138,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist
           PROJECT=.ci/audio8/work/audio8_offline_tts_android
           APK="$PROJECT/build/app/outputs/flutter-apk/app-release.apk"
           test -s "$APK"
+          mkdir -p dist
           cp "$APK" dist/Audio8_Offline_TTS_Android.apk
           sha256sum dist/Audio8_Offline_TTS_Android.apk > dist/Audio8_Offline_TTS_Android.apk.sha256
           (cd .ci/audio8/work && zip -qr "$GITHUB_WORKSPACE/dist/Audio8_Offline_TTS_Android_Source.zip" audio8_offline_tts_android -x '*/build/*' '*/.dart_tool/*' '*/.gradle/*')
           sha256sum dist/Audio8_Offline_TTS_Android.apk dist/Audio8_Offline_TTS_Android_Source.zip > dist/SHA256SUMS.txt
           ls -lh dist
 
-      - name: Upload APK and source
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: audio8-offline-android
           path: dist/
