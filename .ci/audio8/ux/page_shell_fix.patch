@@ -1,0 +1,18 @@
+--- a/lib/app.dart
++++ b/lib/app.dart
+@@ -299,10 +299,13 @@
+   }
+ 
+   Widget pageShell({required List<Widget> children}) {
+-    return ListView(
++    return SingleChildScrollView(
+       padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
+       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+-      children: children,
++      child: Column(
++        crossAxisAlignment: CrossAxisAlignment.stretch,
++        children: children,
++      ),
+     );
+   }
+ 

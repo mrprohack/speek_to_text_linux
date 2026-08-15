@@ -23,7 +23,9 @@ jobs:
           cat .ci/audio8/ux/source.b64.part* | base64 -d > .ci/audio8/ux_source.tar.xz
           echo '95b57808be34af9b71ff314db6befcfe41de47a77d07e1a3b82b2e26d06ae4c8  .ci/audio8/ux_source.tar.xz' | sha256sum -c -
           tar -xJf .ci/audio8/ux_source.tar.xz -C .ci/audio8/work
-          chmod +x .ci/audio8/work/audio8_offline_tts_android/tools/*.sh
+          PROJECT=.ci/audio8/work/audio8_offline_tts_android
+          patch -d "$PROJECT" -p1 < "$GITHUB_WORKSPACE/.ci/audio8/ux/page_shell_fix.patch"
+          chmod +x "$PROJECT"/tools/*.sh
 
       - uses: actions/setup-java@v4
         with:
