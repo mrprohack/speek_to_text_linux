@@ -1,0 +1,1 @@
+The implementation work is isolated on `feat/audio8-mobile-ux-20260815`; the prior crash-fix branch remains the baseline reference.
