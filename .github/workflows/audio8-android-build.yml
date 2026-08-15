@@ -1,9 +1,6 @@
 name: Audio8 Android APK
 
 on:
-  push:
-    branches:
-      - build/audio8-android-20260815
   workflow_dispatch:
 
 permissions:
