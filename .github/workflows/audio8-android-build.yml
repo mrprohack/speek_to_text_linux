@@ -1,8 +1,8 @@
-name: Audio8 Android APK
+name: Audio8 Android UX
 
 on:
   push:
-    branches: [build/audio8-android-20260815]
+    branches: [feat/audio8-mobile-ux-20260815]
   workflow_dispatch:
 
 permissions:
@@ -90,7 +90,7 @@ jobs:
                 'registrationInstalled': false,
                 'voices': <String>[],
                 'lastAudioExists': false,
-                'modelFingerprint': 'test',
+                'modelFingerprint': 'test-fingerprint',
               };
               TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
                   .setMockMethodCallHandler(channel, (call) async {
@@ -104,35 +104,56 @@ jobs:
                   .setMockMethodCallHandler(channel, null);
             });
 
-            testWidgets('first launch guides the user to install the model', (tester) async {
+            testWidgets('first launch is a consumer-first Speak screen', (tester) async {
               app.main();
               await tester.pumpAndSettle();
               expect(find.text('Audio8 Offline'), findsOneWidget);
-              expect(find.text('Step 1 of 2 · Install the Audio8 model'), findsOneWidget);
-              expect(find.text('Setup'), findsOneWidget);
+              expect(find.text('Download model'), findsOneWidget);
+              expect(find.text('What should I say?'), findsOneWidget);
               expect(find.text('Speak'), findsOneWidget);
               expect(find.text('Voices'), findsOneWidget);
+              expect(find.text('Settings'), findsOneWidget);
+              expect(find.text('Model'), findsNothing);
+              expect(find.text('About'), findsNothing);
             });
 
-            testWidgets('model-ready state exposes speech generation', (tester) async {
+            testWidgets('ready state keeps voice and generation in one flow', (tester) async {
               status = <String, Object?>{
                 'coreInstalled': true,
                 'registrationInstalled': true,
                 'voices': <String>['Test Voice'],
                 'lastAudioExists': false,
-                'modelFingerprint': 'test',
+                'modelFingerprint': 'test-fingerprint',
               };
               app.main();
               await tester.pumpAndSettle();
               expect(find.text('Offline ready'), findsOneWidget);
               expect(find.text('Test Voice'), findsOneWidget);
-              await tester.drag(find.byType(ListView).first, const Offset(0, -650));
-              await tester.pumpAndSettle();
               expect(find.text('Generate speech'), findsOneWidget);
               final button = tester.widget<FilledButton>(
                 find.widgetWithText(FilledButton, 'Generate speech'),
               );
               expect(button.onPressed, isNotNull);
+            });
+
+            testWidgets('Voices has a clear create entry point', (tester) async {
+              app.main();
+              await tester.pumpAndSettle();
+              await tester.tap(find.text('Voices'));
+              await tester.pumpAndSettle();
+              expect(find.text('Create voice'), findsOneWidget);
+              expect(find.text('Your voices'), findsOneWidget);
+            });
+
+            testWidgets('Settings owns model privacy and about information', (tester) async {
+              app.main();
+              await tester.pumpAndSettle();
+              await tester.tap(find.text('Settings'));
+              await tester.pumpAndSettle();
+              expect(find.text('Model & storage'), findsOneWidget);
+              expect(find.text('Privacy'), findsOneWidget);
+              expect(find.text('About Audio8'), findsOneWidget);
+              expect(find.textContaining('test-fingerprint'), findsOneWidget);
             });
           }
           DART
@@ -189,7 +210,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: audio8-offline-android-crashfix
+          name: audio8-offline-android-ux
           path: dist/
           if-no-files-found: error
           retention-days: 14
