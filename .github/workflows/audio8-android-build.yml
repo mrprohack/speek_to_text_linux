@@ -2,7 +2,7 @@ name: Audio8 Android UX
 
 on:
   push:
-    branches: [feat/audio8-mobile-ux-20260815]
+    branches: [feat/audio8-mobile-ux-20260815, fix/audio8-create-voice-20260815]
   workflow_dispatch:
 
 permissions:
@@ -25,6 +25,9 @@ jobs:
           tar -xJf .ci/audio8/ux_source.tar.xz -C .ci/audio8/work
           PROJECT=.ci/audio8/work/audio8_offline_tts_android
           patch -d "$PROJECT" -p1 < "$GITHUB_WORKSPACE/.ci/audio8/ux/page_shell_fix.patch"
+          base64 -d "$GITHUB_WORKSPACE/.ci/audio8/ux/create_voice_fix.tar.xz.b64" > .ci/audio8/create_voice_fix.tar.xz
+          echo '689d7436b21b4743007db5075547584ffa957a3400cff63435009a6b6e287fab  .ci/audio8/create_voice_fix.tar.xz' | sha256sum -c -
+          tar -xJf .ci/audio8/create_voice_fix.tar.xz -C "$PROJECT"
           chmod +x "$PROJECT"/tools/*.sh
 
       - uses: actions/setup-java@v4
@@ -71,15 +74,15 @@ jobs:
           test -s "$APK"
           python3 "$PROJECT/tools/verify_apk.py" "$APK"
           mkdir -p dist
-          cp "$APK" dist/Audio8_Offline_TTS_Android_v0.2.0+3.apk
-          sha256sum dist/Audio8_Offline_TTS_Android_v0.2.0+3.apk > dist/Audio8_Offline_TTS_Android_v0.2.0+3.apk.sha256
-          (cd .ci/audio8/work && zip -qr "$GITHUB_WORKSPACE/dist/Audio8_Offline_TTS_Android_Source_v0.2.0+3.zip" audio8_offline_tts_android -x '*/build/*' '*/.dart_tool/*' '*/.gradle/*')
-          sha256sum dist/Audio8_Offline_TTS_Android_v0.2.0+3.apk dist/Audio8_Offline_TTS_Android_Source_v0.2.0+3.zip > dist/SHA256SUMS.txt
+          cp "$APK" dist/Audio8_Offline_TTS_Android_v0.2.1+4.apk
+          sha256sum dist/Audio8_Offline_TTS_Android_v0.2.1+4.apk > dist/Audio8_Offline_TTS_Android_v0.2.1+4.apk.sha256
+          (cd .ci/audio8/work && zip -qr "$GITHUB_WORKSPACE/dist/Audio8_Offline_TTS_Android_Source_v0.2.1+4.zip" audio8_offline_tts_android -x '*/build/*' '*/.dart_tool/*' '*/.gradle/*')
+          sha256sum dist/Audio8_Offline_TTS_Android_v0.2.1+4.apk dist/Audio8_Offline_TTS_Android_Source_v0.2.1+4.zip > dist/SHA256SUMS.txt
           ls -lh dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: audio8-offline-android-v0.2.0+3
+          name: audio8-offline-android-v0.2.1+4-create-voice-fix
           path: dist/
           if-no-files-found: error
           retention-days: 14
