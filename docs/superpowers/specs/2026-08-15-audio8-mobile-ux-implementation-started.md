@@ -1,0 +1,1 @@
+Implementation is proceeding from the approved 2026-08-15 Audio8 mobile UX design and plan on this build branch. The native Audio8 engine remains unchanged; Flutter presentation and tests are the implementation scope.
