@@ -15,148 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore and patch crash fix source
+      - name: Restore Audio8 mobile UX source
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .ci/audio8/work
-          cat .ci/audio8/source.b64.part{1,2,3,4} | base64 -d > .ci/audio8/source.tar.xz
-          echo 'e7cf4834f0e39ebada602c0e36905a9cbc557b743ae3dc2a3552eb40f8463e60  .ci/audio8/source.tar.xz' | sha256sum -c -
-          tar -xJf .ci/audio8/source.tar.xz -C .ci/audio8/work
-          PROJECT=.ci/audio8/work/audio8_offline_tts_android
-          chmod +x "$PROJECT"/tools/*.sh
-          python3 - <<'PY'
-          from pathlib import Path
-          r=Path('.ci/audio8/work/audio8_offline_tts_android')
-
-          p=r/'android/app/build.gradle.kts'
-          s=p.read_text()
-          old='plugins { id("com.android.application"); id("dev.flutter.flutter-gradle-plugin") }'
-          new='plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("dev.flutter.flutter-gradle-plugin") }'
-          if old not in s:
-              raise SystemExit('expected app plugins block not found')
-          p.write_text(s.replace(old,new,1))
-
-          p=r/'pubspec.yaml'
-          p.write_text(p.read_text().replace('version: 0.1.0+1','version: 0.1.1+2'))
-
-          p=r/'tools/build_android.sh'
-          s=p.read_text()
-          old='test -s "$APK";sha256sum "$APK" | tee "$APK.sha256";echo "APK=$APK"'
-          new='test -s "$APK";python3 tools/verify_apk.py "$APK";sha256sum "$APK" | tee "$APK.sha256";echo "APK=$APK"'
-          if old not in s:
-              raise SystemExit('expected APK packaging line not found')
-          p.write_text(s.replace(old,new,1))
-
-          p=r/'tools/verify_project.py'
-          p.write_text(p.read_text()+"\ng=(r/'android/app/build.gradle.kts').read_text();assert 'id(\"org.jetbrains.kotlin.android\")' in g, 'Kotlin Android plugin must be applied so MainActivity.kt is compiled'\n")
-          PY
-
-          cat > "$PROJECT/tools/verify_apk.py" <<'PY'
-          #!/usr/bin/env python3
-          from pathlib import Path
-          from zipfile import ZipFile
-          import sys
-          if len(sys.argv) != 2:
-              raise SystemExit('usage: verify_apk.py <apk>')
-          apk=Path(sys.argv[1])
-          if not apk.is_file() or apk.stat().st_size == 0:
-              raise SystemExit(f'APK missing or empty: {apk}')
-          needle=b'Lcom/mrpro/audio8offline/MainActivity;'
-          with ZipFile(apk) as z:
-              dex=[n for n in z.namelist() if n.startswith('classes') and n.endswith('.dex')]
-              if not dex:
-                  raise SystemExit('APK contains no classes*.dex')
-              if not any(needle in z.read(n) for n in dex):
-                  raise SystemExit('MainActivity is missing from APK DEX')
-          print('APK entrypoint verification: PASS')
-          PY
-          chmod +x "$PROJECT/tools/verify_apk.py"
-
-          cat > "$PROJECT/test/smoke_test.dart" <<'DART'
-          import 'package:audio8_offline_tts/main.dart' as app;
-          import 'package:flutter/material.dart';
-          import 'package:flutter/services.dart';
-          import 'package:flutter_test/flutter_test.dart';
-
-          void main() {
-            TestWidgetsFlutterBinding.ensureInitialized();
-            const channel = MethodChannel('audio8_offline/methods');
-            late Map<String, Object?> status;
-
-            setUp(() {
-              status = <String, Object?>{
-                'coreInstalled': false,
-                'registrationInstalled': false,
-                'voices': <String>[],
-                'lastAudioExists': false,
-                'modelFingerprint': 'test-fingerprint',
-              };
-              TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-                  .setMockMethodCallHandler(channel, (call) async {
-                if (call.method == 'status') return status;
-                return null;
-              });
-            });
-
-            tearDown(() {
-              TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-                  .setMockMethodCallHandler(channel, null);
-            });
-
-            testWidgets('first launch is a consumer-first Speak screen', (tester) async {
-              app.main();
-              await tester.pumpAndSettle();
-              expect(find.text('Audio8 Offline'), findsOneWidget);
-              expect(find.text('Download model'), findsOneWidget);
-              expect(find.text('What should I say?'), findsOneWidget);
-              expect(find.text('Speak'), findsOneWidget);
-              expect(find.text('Voices'), findsOneWidget);
-              expect(find.text('Settings'), findsOneWidget);
-              expect(find.text('Model'), findsNothing);
-              expect(find.text('About'), findsNothing);
-            });
-
-            testWidgets('ready state keeps voice and generation in one flow', (tester) async {
-              status = <String, Object?>{
-                'coreInstalled': true,
-                'registrationInstalled': true,
-                'voices': <String>['Test Voice'],
-                'lastAudioExists': false,
-                'modelFingerprint': 'test-fingerprint',
-              };
-              app.main();
-              await tester.pumpAndSettle();
-              expect(find.text('Offline ready'), findsOneWidget);
-              expect(find.text('Test Voice'), findsOneWidget);
-              expect(find.text('Generate speech'), findsOneWidget);
-              final button = tester.widget<FilledButton>(
-                find.widgetWithText(FilledButton, 'Generate speech'),
-              );
-              expect(button.onPressed, isNotNull);
-            });
-
-            testWidgets('Voices has a clear create entry point', (tester) async {
-              app.main();
-              await tester.pumpAndSettle();
-              await tester.tap(find.text('Voices'));
-              await tester.pumpAndSettle();
-              expect(find.text('Create voice'), findsOneWidget);
-              expect(find.text('Your voices'), findsOneWidget);
-            });
-
-            testWidgets('Settings owns model privacy and about information', (tester) async {
-              app.main();
-              await tester.pumpAndSettle();
-              await tester.tap(find.text('Settings'));
-              await tester.pumpAndSettle();
-              expect(find.text('Model & storage'), findsOneWidget);
-              expect(find.text('Privacy'), findsOneWidget);
-              expect(find.text('About Audio8'), findsOneWidget);
-              expect(find.textContaining('test-fingerprint'), findsOneWidget);
-            });
-          }
-          DART
+          cat .ci/audio8/ux/source.b64.part* | base64 -d > .ci/audio8/ux_source.tar.xz
+          echo '95b57808be34af9b71ff314db6befcfe41de47a77d07e1a3b82b2e26d06ae4c8  .ci/audio8/ux_source.tar.xz' | sha256sum -c -
+          tar -xJf .ci/audio8/ux_source.tar.xz -C .ci/audio8/work
+          chmod +x .ci/audio8/work/audio8_offline_tts_android/tools/*.sh
 
       - uses: actions/setup-java@v4
         with:
@@ -202,15 +69,15 @@ jobs:
           test -s "$APK"
           python3 "$PROJECT/tools/verify_apk.py" "$APK"
           mkdir -p dist
-          cp "$APK" dist/Audio8_Offline_TTS_Android_v0.1.1+2.apk
-          sha256sum dist/Audio8_Offline_TTS_Android_v0.1.1+2.apk > dist/Audio8_Offline_TTS_Android_v0.1.1+2.apk.sha256
-          (cd .ci/audio8/work && zip -qr "$GITHUB_WORKSPACE/dist/Audio8_Offline_TTS_Android_Source_v0.1.1+2.zip" audio8_offline_tts_android -x '*/build/*' '*/.dart_tool/*' '*/.gradle/*')
-          sha256sum dist/Audio8_Offline_TTS_Android_v0.1.1+2.apk dist/Audio8_Offline_TTS_Android_Source_v0.1.1+2.zip > dist/SHA256SUMS.txt
+          cp "$APK" dist/Audio8_Offline_TTS_Android_v0.2.0+3.apk
+          sha256sum dist/Audio8_Offline_TTS_Android_v0.2.0+3.apk > dist/Audio8_Offline_TTS_Android_v0.2.0+3.apk.sha256
+          (cd .ci/audio8/work && zip -qr "$GITHUB_WORKSPACE/dist/Audio8_Offline_TTS_Android_Source_v0.2.0+3.zip" audio8_offline_tts_android -x '*/build/*' '*/.dart_tool/*' '*/.gradle/*')
+          sha256sum dist/Audio8_Offline_TTS_Android_v0.2.0+3.apk dist/Audio8_Offline_TTS_Android_Source_v0.2.0+3.zip > dist/SHA256SUMS.txt
           ls -lh dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: audio8-offline-android-ux
+          name: audio8-offline-android-v0.2.0+3
           path: dist/
           if-no-files-found: error
           retention-days: 14
