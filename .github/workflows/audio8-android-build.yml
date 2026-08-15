@@ -24,7 +24,7 @@ jobs:
           mkdir -p .ci/audio8/work
           cat .ci/audio8/source.b64.part1 .ci/audio8/source.b64.part2 .ci/audio8/source.b64.part3 .ci/audio8/source.b64.part4 \
             | base64 -d > .ci/audio8/source.tar.xz
-          echo 'e8f17a07ee11d5496fe0039ce8b15614074d318f648b53e56ba7c3dc583ca2a6  .ci/audio8/source.tar.xz' | sha256sum -c -
+          echo 'e7cf4834f0e39ebada602c0e36905a9cbc557b743ae3dc2a3552eb40f8463e60  .ci/audio8/source.tar.xz' | sha256sum -c -
           tar -xJf .ci/audio8/source.tar.xz -C .ci/audio8/work
           test -f .ci/audio8/work/audio8_offline_tts_android/pubspec.yaml
           chmod +x .ci/audio8/work/audio8_offline_tts_android/tools/*.sh
