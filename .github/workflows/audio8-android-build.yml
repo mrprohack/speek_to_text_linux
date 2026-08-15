@@ -1,6 +1,9 @@
 name: Audio8 Android APK
 
 on:
+  push:
+    branches:
+      - build/audio8-android-20260815
   workflow_dispatch:
 
 permissions:
@@ -25,6 +28,78 @@ jobs:
           tar -xJf .ci/audio8/source.tar.xz -C .ci/audio8/work
           test -f .ci/audio8/work/audio8_offline_tts_android/pubspec.yaml
           chmod +x .ci/audio8/work/audio8_offline_tts_android/tools/*.sh
+
+      - name: Apply widget-test regression fix
+        shell: bash
+        run: |
+          cat > .ci/audio8/work/audio8_offline_tts_android/test/smoke_test.dart <<'DART'
+          import 'package:audio8_offline_tts/main.dart' as app;
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+          import 'package:flutter_test/flutter_test.dart';
+
+          void main() {
+            TestWidgetsFlutterBinding.ensureInitialized();
+            const channel = MethodChannel('audio8_offline/methods');
+            late Map<String, Object?> status;
+
+            setUp(() {
+              status = <String, Object?>{
+                'coreInstalled': false,
+                'registrationInstalled': false,
+                'voices': <String>[],
+                'lastAudioExists': false,
+                'modelFingerprint': 'test',
+              };
+              TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+                  .setMockMethodCallHandler(channel, (call) async {
+                if (call.method == 'status') return status;
+                return null;
+              });
+            });
+
+            tearDown(() {
+              TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+                  .setMockMethodCallHandler(channel, null);
+            });
+
+            testWidgets('first launch guides the user to install the model', (tester) async {
+              app.main();
+              await tester.pumpAndSettle();
+
+              expect(find.text('Audio8 Offline'), findsOneWidget);
+              expect(find.text('Step 1 of 2 · Install the Audio8 model'), findsOneWidget);
+              expect(find.text('Setup'), findsOneWidget);
+              expect(find.text('Speak'), findsOneWidget);
+              expect(find.text('Voices'), findsOneWidget);
+            });
+
+            testWidgets('model-ready state exposes speech generation', (tester) async {
+              status = <String, Object?>{
+                'coreInstalled': true,
+                'registrationInstalled': true,
+                'voices': <String>['Test Voice'],
+                'lastAudioExists': false,
+                'modelFingerprint': 'test',
+              };
+
+              app.main();
+              await tester.pumpAndSettle();
+
+              expect(find.text('Offline ready'), findsOneWidget);
+              expect(find.text('Test Voice'), findsOneWidget);
+
+              await tester.drag(find.byType(ListView).first, const Offset(0, -650));
+              await tester.pumpAndSettle();
+
+              expect(find.text('Generate speech'), findsOneWidget);
+              final button = tester.widget<FilledButton>(
+                find.widgetWithText(FilledButton, 'Generate speech'),
+              );
+              expect(button.onPressed, isNotNull);
+            });
+          }
+          DART
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
